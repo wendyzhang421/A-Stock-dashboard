@@ -52,7 +52,15 @@ jobs:
           fi
 
       - name: Refresh dashboard
-        run: python scripts/cloud_refresh_dashboard.py "${{ steps.refresh-date.outputs.value }}"
+        shell: bash
+        run: |
+          set +e
+          python scripts/cloud_refresh_dashboard.py "${{ steps.refresh-date.outputs.value }}"
+          status=$?
+          if [ "${status}" -ne 0 ]; then
+            echo "Cloud refresh failed; keeping the latest committed reports as deployment fallback."
+          fi
+          exit 0
 
       - name: Commit refreshed reports
         shell: bash
