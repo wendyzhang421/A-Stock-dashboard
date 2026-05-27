@@ -1,0 +1,78 @@
+name: Refresh A-Share Dashboard
+
+on:
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: Optional trading date in YYYY-MM-DD format
+        required: false
+        type: string
+  schedule:
+    - cron: "10 8 * * 1-5"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh-dashboard
+  cancel-in-progress: false
+
+jobs:
+  refresh-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+      ASTOCK_TRUST_ENV: "0"
+      ASTOCK_IFIND_REFRESH_TOKEN: ${{ secrets.ASTOCK_IFIND_REFRESH_TOKEN }}
+      ASTOCK_AS_OF: ${{ github.event.inputs.as_of || '' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Resolve refresh date
+        id: refresh-date
+        shell: bash
+        run: |
+          if [ -n "${ASTOCK_AS_OF}" ]; then
+            echo "value=${ASTOCK_AS_OF}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "value=$(TZ=Asia/Shanghai date +%F)" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Refresh dashboard
+        run: python scripts/cloud_refresh_dashboard.py "${{ steps.refresh-date.outputs.value }}"
+
+      - name: Commit refreshed reports
+        shell: bash
+        run: |
+          if git diff --quiet -- reports; then
+            echo "No report changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports
+          git commit -m "Refresh dashboard for ${{ steps.refresh-date.outputs.value }}"
+          git push
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: reports
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

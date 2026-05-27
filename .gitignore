@@ -1,0 +1,8 @@
+.env.local
+.telegram_updates_offset
+.telegram_bot_offset
+.telegram_bot_memory.json
+.alert_state.json
+__pycache__/
+.venv/
+.DS_Store

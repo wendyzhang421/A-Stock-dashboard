@@ -1,0 +1,5117 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import base64
+import csv
+import io
+import json
+import os
+import re
+import subprocess
+import time
+import urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from functools import lru_cache
+from pathlib import Path
+
+import requests
+from pypdf import PdfReader
+
+try:
+    import efinance as ef
+    from efinance.shared import session as efinance_session
+except Exception:
+    ef = None
+    efinance_session = None
+
+REFRESH_TOKEN = (
+    "eyJzaWduX3RpbWUiOiIyMDI2LTA0LTAyIDEwOjIxOjMyIn0=."
+    "eyJ1aWQiOiI4NTQ5NDc3MzYiLCJ1c2VyIjp7InJlZnJlc2hUb2tlbkV4cGlyZWRUaW1lIjoiMjAyNi0wNC0yNCAxMDozMTozNyIsInVzZXJJZCI6Ijg1NDk0NzczNiJ9fQ==."
+    "B872475D7BE9A6E269993547F2ABABFC4F9488AA06D37A03114C925B8BE163AE"
+)
+BASE_URL = "https://quantapi.51ifind.com/api/v1"
+FUNDFLOW_API = "https://datacenter-web.eastmoney.com/api/data/get"
+LIMIT_UP_POOL_API = "https://push2ex.eastmoney.com/getTopicZTPool"
+QUOTE_API = "https://push2.eastmoney.com/api/qt/stock/get"
+OUT_DIR = Path("reports")
+OUT_DIR.mkdir(exist_ok=True)
+TRUST_ENV = os.environ.get("ASTOCK_TRUST_ENV", "1").strip().lower() not in {"0", "false", "no", "off"}
+AS_OF_OVERRIDE = os.environ.get("ASTOCK_AS_OF", "").strip()
+AS_OF = date.fromisoformat(AS_OF_OVERRIDE) if AS_OF_OVERRIDE else datetime.now(timezone(timedelta(hours=8))).date()
+DEEP_DIVE_CSV = OUT_DIR / "seven_stocks_deep_dive_2026-04-02.csv"
+POST_CLOSE_REPORT = Path(f"post_close_result_{AS_OF.isoformat()}.md")
+AS_OF_DT = datetime(AS_OF.year, AS_OF.month, AS_OF.day, 23, 59, 59, tzinfo=timezone(timedelta(hours=8)))
+NEWS_TMPL = "https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+NEWS_LOOKBACK_DAYS = 3
+MIN_ACCEPTABLE_NEWS_SCORE = 35
+STRONG_MIN_PCT = 5.0
+STRONG_MIN_TOTAL_CAP = 8e9
+STRONG_MAX_TOTAL_CAP = 1.2e11
+STRONG_MIN_AMOUNT = 5e8
+STRONG_MIN_TURNOVER = 5.0
+STRONG_MAX_TURNOVER = 25.0
+STRONG_DISPLAY_LIMIT = 20
+MARKET_INDEXES = [
+    ("上证指数", "000001.SH"),
+    ("深证成指", "399001.SZ"),
+    ("创业板指", "399006.SZ"),
+    ("沪深300", "000300.SH"),
+    ("科创50", "000688.SH"),
+]
+INDEX_DETAIL_MAP = {
+    "399006.SZ": {
+        "title": "创业板指详情",
+        "note": "代表性权重股参考",
+        "leaders": [
+            {"name": "宁德时代", "code": "300750.SZ", "tag": "新能源权重核心"},
+            {"name": "东方财富", "code": "300059.SZ", "tag": "平台型券商互联网龙头"},
+            {"name": "迈瑞医疗", "code": "300760.SZ", "tag": "医疗器械龙头"},
+            {"name": "汇川技术", "code": "300124.SZ", "tag": "工控自动化龙头"},
+            {"name": "中际旭创", "code": "300308.SZ", "tag": "光模块核心权重"},
+            {"name": "新易盛", "code": "300502.SZ", "tag": "高速光模块弹性"},
+        ],
+    },
+    "000688.SH": {
+        "title": "科创50详情",
+        "note": "代表性权重股参考",
+        "leaders": [
+            {"name": "海光信息", "code": "688041.SH", "tag": "国产算力权重核心"},
+            {"name": "寒武纪", "code": "688256.SH", "tag": "AI芯片高弹性龙头"},
+            {"name": "中芯国际", "code": "688981.SH", "tag": "晶圆制造龙头"},
+            {"name": "澜起科技", "code": "688008.SH", "tag": "服务器芯片/内存接口"},
+            {"name": "金山办公", "code": "688111.SH", "tag": "软件平台型权重"},
+            {"name": "传音控股", "code": "688036.SH", "tag": "消费电子出海核心"},
+        ],
+    },
+}
+
+INSTITUTION_FUND_CODES = [
+    "159915",
+    "588000",
+    "512480",
+    "512660",
+    "510300",
+    "512170",
+    "159995",
+    "515790",
+]
+MAINLINE_KEYWORDS = (
+    "CPO",
+    "光模块",
+    "光通信",
+    "光芯片",
+    "光器件",
+    "PCB",
+    "算力",
+    "存储",
+    "液冷",
+    "机器人",
+    "连接器",
+    "铜缆",
+    "高速光",
+)
+NEWS_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+)
+
+POSITIVE_NEWS_KEYWORDS = {
+    "公告": 50,
+    "年报": 45,
+    "季报": 45,
+    "业绩": 40,
+    "预增": 35,
+    "预减": 30,
+    "中标": 40,
+    "订单": 40,
+    "合同": 35,
+    "签约": 28,
+    "获批": 45,
+    "批准": 35,
+    "临床": 42,
+    "回购": 36,
+    "增持": 30,
+    "减持": 24,
+    "问询": 35,
+    "监管": 35,
+    "风险提示": 38,
+    "停牌": 35,
+    "复牌": 35,
+    "量产": 32,
+    "新品": 24,
+    "发布": 20,
+    "合作": 24,
+    "项目": 18,
+}
+
+NEGATIVE_NEWS_KEYWORDS = {
+    "主力资金": -60,
+    "异动快报": -60,
+    "股票行情快报": -60,
+    "涨停分析": -55,
+    "龙虎榜": -45,
+    "复盘": -45,
+    "盘中": -30,
+    "收盘": -30,
+    "ETF": -35,
+    "概念": -25,
+    "资金净买入": -50,
+    "资金净卖出": -50,
+    "牛股": -35,
+    "熊股": -35,
+    "行业十大": -25,
+    "个股点评": -25,
+    "股市要闻": -30,
+    "主力研究": -35,
+    "基金重仓": -40,
+    "抢筹": -35,
+    "成交额前十大": -45,
+    "风潮": -25,
+    "涨停": -20,
+    "收跌": -20,
+    "收涨": -20,
+}
+
+BUSINESS_KEYWORD_MAP = [
+    ("存储", "存储/存储芯片"),
+    ("存储芯片", "存储/存储芯片"),
+    ("内存", "存储/内存接口"),
+    ("HBM", "存储/HBM"),
+    ("CPO", "光通信/CPO"),
+    ("光模块", "光通信/光模块"),
+    ("光通信", "光通信"),
+    ("铜缆", "铜缆连接"),
+    ("服务器", "服务器/算力"),
+    ("算力", "算力/智算"),
+    ("液冷", "液冷"),
+    ("PCB", "PCB"),
+    ("芯片", "芯片"),
+    ("半导体", "半导体"),
+    ("软件", "软件开发"),
+    ("广告", "广告营销"),
+    ("营销", "广告营销"),
+    ("AIGC", "AI应用/营销"),
+    ("机器人", "机器人"),
+    ("风电", "风电设备"),
+    ("锂电", "锂电"),
+    ("电池", "电池设备"),
+    ("自动化", "自动化设备"),
+    ("激光", "激光设备/器件"),
+    ("光学", "光学器件"),
+]
+
+WATCHLIST_BASE = [
+    ("美利云", "000815.SZ"),
+    ("智立方", "301312.SZ"),
+    ("德科立", "688205.SH"),
+    ("福晶科技", "002222.SZ"),
+    ("光迅科技", "002281.SZ"),
+    ("赛微电子", "300456.SZ"),
+    ("腾景科技", "688195.SH"),
+    ("拉普拉斯", "688726.SH"),
+    ("德明利", "001309.SZ"),
+    ("奥瑞德", "600666.SH"),
+    ("京运通", "601908.SH"),
+    ("中天科技", "600522.SH"),
+    ("亨通光电", "600487.SH"),
+    ("金风科技", "002202.SZ"),
+    ("华胜天成", "600410.SH"),
+    ("电光科技", "002730.SZ"),
+    ("太辰光", "300570.SZ"),
+    ("澜起科技", "688008.SH"),
+    ("中润光学", "688307.SH"),
+    ("联特科技", "301205.SZ"),
+    ("亚翔集成", "603929.SH"),
+    ("中船科技", "600072.SH"),
+    ("中瓷电子", "003031.SZ"),
+    ("天通股份", "600330.SH"),
+    ("长光华芯", "688048.SH"),
+    ("杰普特", "688025.SH"),
+    ("芯动联科", "688582.SH"),
+    ("仕佳光子", "688313.SH"),
+    ("易天股份", "300812.SZ"),
+    ("致尚科技", "301486.SZ"),
+    ("海光信息", "688041.SH"),
+    ("利通电子", "603629.SH"),
+    ("浪潮信息", "000977.SZ"),
+    ("宏景科技", "301396.SZ"),
+    ("光环新网", "300383.SZ"),
+    ("光库科技", "300620.SZ"),
+    ("华工科技", "000988.SZ"),
+    ("协创数据", "300857.SZ"),
+    ("信维通信", "300136.SZ"),
+    ("德福科技", "301511.SZ"),
+    ("金海通", "603061.SH"),
+    ("沃格光电", "603773.SH"),
+    ("科士达", "002518.SZ"),
+    ("应流股份", "603308.SH"),
+    ("汇川技术", "300124.SZ"),
+    ("富创精密", "688409.SH"),
+]
+
+MAIN_BUSINESS_MAP = {
+    "000815.SZ": "IDC/国资云",
+    "301312.SZ": "光模块设备/CPO检测",
+    "688205.SH": "高速光模块/CPO",
+    "002222.SZ": "光学晶体/激光器件",
+    "688726.SH": "光通信设备/激光装备",
+    "001309.SZ": "存储主控/存储模组",
+    "600666.SH": "算力租赁/智算服务",
+    "601908.SH": "硅片/光伏电站",
+    "600522.SH": "海缆/光通信",
+    "600487.SH": "光通信/CPO/海缆",
+    "002202.SZ": "风机整机/风电",
+    "600410.SH": "算力平台/系统集成",
+    "002821.SZ": "创新药CXO/CDMO",
+    "603296.SH": "AI硬件ODM/服务器",
+    "600105.SH": "光通信/铜缆连接",
+    "600673.SH": "液冷材料/制冷剂",
+    "688498.SH": "高速光芯片/CPO",
+    "002796.SZ": "机柜/通信设备",
+    "688195.SH": "光学元件/CPO",
+    "300620.SZ": "光通信器件/激光器件",
+    "300666.SZ": "半导体材料/高端靶材",
+    "002281.SZ": "光模块/光器件/CPO",
+    "300456.SZ": "MEMS/晶圆制造",
+    "002730.SZ": "矿用防爆/算力电源配套",
+    "300570.SZ": "高速光模块/光器件",
+    "688008.SH": "内存接口芯片/服务器芯片",
+    "688307.SH": "机器视觉/精密光学",
+    "301205.SZ": "高速光模块/CPO",
+    "603929.SH": "洁净工程/半导体厂务",
+    "600072.SH": "船舶装备/新能源工程",
+    "003031.SZ": "电子陶瓷/氮化镓外延",
+    "600330.SH": "磁性材料/蓝宝石/衬底",
+    "688048.SH": "高功率激光芯片",
+    "688025.SH": "激光器/激光装备",
+    "688582.SH": "高性能MEMS惯导",
+    "688313.SH": "光芯片/PLC器件/CPO",
+    "300812.SZ": "显示面板设备/消费电子设备",
+    "301486.SZ": "精密连接器/光通信",
+    "300395.SZ": "石英材料/半导体耗材",
+    "301095.SZ": "EDA/芯片良率分析",
+    "300001.SZ": "充电桩/电力设备",
+    "300661.SZ": "模拟芯片/电源管理",
+    "000591.SZ": "光伏电站/新能源运营",
+    "688213.SH": "CIS图像传感器",
+    "000767.SZ": "火电/电力运营",
+    "000672.SZ": "水泥/骨料",
+    "688150.SH": "OLED材料",
+    "688785.SH": "算力服务器/液冷整机",
+    "300285.SZ": "电子陶瓷/MLCC材料",
+    "603920.SH": "PCB",
+    "300058.SZ": "AI营销/出海营销",
+    "300475.SZ": "存储分销/存储芯片",
+    "300679.SZ": "连接器/射频器件",
+    "301396.SZ": "算力/智算中心/数字化服务",
+    "300139.SZ": "智能电表/黄金矿业",
+    "301171.SZ": "出海营销/AIGC营销",
+    "688125.SH": "消费电子自动化设备",
+    "688337.SH": "测试测量/示波器",
+    "688392.SH": "超声波焊接设备",
+    "301018.SZ": "精密空调/液冷温控",
+    "300085.SZ": "金融IT/互联网金融",
+    "688270.SH": "卫星导航/射频芯片",
+    "300166.SZ": "工业互联网/大数据",
+    "300017.SZ": "CDN/边缘算力",
+    "688676.SH": "干式变压器/储能",
+    "301500.SZ": "再生金属/资源循环",
+    "688702.SH": "交换芯片/网络芯片",
+    "301200.SZ": "PCB专用设备",
+    "300986.SZ": "铝模/装配式建筑",
+    "300548.SZ": "光模块/光器件",
+    "688158.SH": "云计算/智算云",
+    "688343.SH": "AI芯片/边缘智能",
+    "688535.SH": "半导体封装材料",
+    "300113.SZ": "云游戏/算力云",
+    "688396.SH": "功率半导体/IDM",
+    "300170.SZ": "ERP/企业软件",
+    "688603.SH": "PCB电子化学品",
+    "300322.SZ": "天线/散热件",
+    "688031.SH": "大数据基础软件",
+    "688818.SH": "军工电子/卫星通信",
+    "300846.SZ": "云计算/算力服务",
+    "300785.SZ": "电商导购/AI内容",
+    "301489.SZ": "散热材料/消费电子",
+    "300364.SZ": "数字阅读/AI内容",
+    "300738.SZ": "IDC/算力租赁",
+    "688668.SH": "连接器/高速铜缆",
+    "688183.SH": "PCB",
+    "688258.SH": "信创固件/云服务",
+    "300480.SZ": "半导体设备/传感器",
+    "300857.SZ": "智能硬件/存储模组",
+    "300136.SZ": "天线/射频器件/消费电子",
+    "301511.SZ": "电子铜箔/锂电材料",
+    "603061.SH": "半导体测试分选设备",
+    "300499.SZ": "液冷/电力电子",
+    "300383.SZ": "IDC/云计算/算力服务",
+    "300762.SZ": "军工通信/卫星互联网",
+    "002240.SZ": "锂矿/锂盐",
+    "688536.SH": "模拟芯片/信号链芯片",
+    "688220.SH": "蜂窝通信芯片/SoC",
+    "300672.SZ": "存储芯片/AI视觉芯片",
+    "688239.SH": "航空发动机锻件/军工材料",
+    "688110.SH": "存储芯片/NAND",
+    "688800.SH": "连接器/高速铜缆",
+    "688449.SH": "存储主控/SSD主控",
+    "688691.SH": "ASIC设计服务/芯片定制",
+    "605376.SH": "金属粉体/MLCC材料",
+    "002025.SZ": "军工连接器/继电器",
+    "603119.SH": "云母绝缘材料/新能源汽车",
+    "600246.SH": "IDC/卫星互联网",
+    "300634.SZ": "企业短信/AI应用",
+    "300184.SZ": "电子元器件分销",
+    "300454.SZ": "网络安全/云计算",
+    "688123.SH": "存储芯片/模拟芯片",
+    "300602.SZ": "电磁屏蔽/散热件",
+    "300900.SZ": "航空航天零部件",
+    "300418.SZ": "AI应用/海外社交",
+    "688226.SH": "母线/储能",
+    "688141.SH": "模拟芯片/电源管理",
+    "300975.SZ": "电子元器件分销",
+    "688531.SH": "X射线检测设备",
+    "301563.SZ": "电子元器件B2B/分销",
+    "688041.SH": "国产CPU/DCU/算力芯片",
+    "603629.SH": "显示结构件/算力服务器",
+    "000977.SZ": "AI服务器/算力基础设施",
+    "000988.SZ": "光模块/激光装备/传感器",
+    "002407.SZ": "六氟磷酸锂/锂电材料",
+    "300468.SZ": "金融IT/跨境支付",
+    "300866.SZ": "消费电子/品牌出海",
+    "300458.SZ": "SoC芯片/智能终端芯片",
+    "300390.SZ": "锂电材料/氢氧化锂",
+    "300438.SZ": "锂电池/储能电芯",
+    "300118.SZ": "光伏组件/储能",
+    "000762.SZ": "锂矿/盐湖提锂",
+    "603026.SH": "电解液溶剂/新能源材料",
+    "600345.SH": "轨交通信/北斗应用",
+    "600338.SH": "锂盐/有色金属资源",
+    "603773.SH": "玻璃基板/光电材料",
+    "688275.SH": "磷酸铁锂/正极材料",
+    "000967.SZ": "环卫装备/环保设备",
+    "600166.SH": "商用车/重卡",
+    "002083.SZ": "家纺/热电",
+    "600499.SH": "建材机械/锂电装备",
+    "000559.SZ": "汽车零部件/底盘系统",
+    "603256.SH": "电子布/覆铜板材料",
+    "300037.SZ": "电解液/氟化工",
+    "688503.SH": "光伏银浆",
+    "603893.SH": "SoC芯片/AIoT",
+    "002104.SZ": "数字人民币/金融IT",
+    "300769.SZ": "磷酸铁锂/正极材料",
+    "002080.SZ": "风电叶片/玻纤",
+    "002922.SZ": "电源/新能源变压器",
+    "603659.SH": "负极材料/隔膜涂覆",
+    "001203.SZ": "铁矿石/球团矿",
+    "000612.SZ": "电解铝/铝加工",
+    "603283.SH": "自动化设备/消费电子装备",
+    "601778.SH": "光伏电站/绿电运营",
+    "600759.SH": "油气开采",
+    "601020.SH": "锑矿/有色金属",
+    "688180.SH": "创新药/PD-1",
+    "603950.SH": "发动机零部件",
+    "603083.SH": "光模块/光通信/CPO",
+    "688331.SH": "创新药/ADC",
+    "603002.SH": "覆铜板/电子树脂",
+    "601179.SH": "输变电设备/特高压",
+    "603063.SH": "风电变流器/储能逆变器",
+    "603444.SH": "网络游戏/游戏平台",
+    "600550.SH": "输变电设备/特高压变压器",
+    "300903.SZ": "PCB",
+    "301358.SZ": "磷酸铁锂/正极材料",
+    "002840.SZ": "生猪养殖/肉制品",
+    "300681.SZ": "新能源汽车电驱/电控",
+    "603890.SH": "消费电子结构件/笔电",
+    "002437.SZ": "化学制药/创新药",
+    "002519.SZ": "军工电子/智能机电",
+    "688059.SH": "硬质合金刀具/数控刀具",
+    "688390.SH": "光伏逆变器/储能",
+    "688515.SH": "以太网芯片/车载通信芯片",
+    "688717.SH": "光伏逆变器/储能系统",
+    "600498.SH": "光通信设备/海缆",
+    "688017.SH": "谐波减速器/机器人",
+    "002428.SZ": "锗材料/光通信材料",
+    "300258.SZ": "汽车齿轮/新能源车零部件",
+    "001267.SZ": "园林生态/光伏绿电",
+    "605358.SH": "硅片/功率半导体",
+    "603667.SH": "轴承/机器人零部件",
+    "688523.SH": "航空航天零部件/军工装备",
+    "002491.SZ": "光通信线缆/网络设备",
+    "002655.SZ": "声学器件/智能终端",
+    "002929.SZ": "通信运维/算力服务",
+    "002865.SZ": "光伏电池/Topcon",
+    "600480.SH": "汽车零部件/轻量化",
+    "300129.SZ": "海上风电/风电塔筒",
+    "002156.SZ": "封测/存储封装",
+    "300302.SZ": "存储/灾备软件",
+    "688234.SH": "碳化硅衬底/第三代半导体",
+    "688167.SH": "激光器/汽车激光雷达",
+    "002179.SZ": "军工连接器/光电互连",
+    "300693.SZ": "储能逆变器/充电桩",
+    "688146.SH": "电子特气/半导体材料",
+    "300782.SZ": "射频前端/滤波器",
+    "688596.SH": "半导体厂务/特气供应系统",
+    "300757.SZ": "光伏设备/自动化产线",
+    "002600.SZ": "消费电子精密制造",
+    "002506.SZ": "光伏组件/一体化制造",
+    "002245.SZ": "锂电池/LED芯片",
+    "688143.SH": "特种光纤/光器件",
+    "300323.SZ": "LED芯片/Mini LED",
+    "003022.SZ": "EVA/光伏材料",
+    "002254.SZ": "芳纶/氨纶",
+    "600509.SH": "电力/煤电铝一体化",
+    "603052.SH": "消费电子功能材料",
+    "002518.SZ": "UPS电源/储能",
+    "000811.SZ": "制冷设备/工业冷冻",
+    "603308.SH": "高端铸件/航空发动机零部件",
+    "300124.SZ": "工控自动化/新能源驱动",
+    "688409.SH": "半导体设备零部件",
+    "300223.SZ": "存储芯片/MCU/车规芯片",
+    "688585.SH": "复合材料/风电材料",
+    "688300.SH": "电子封装材料/球形硅微粉",
+    "688333.SH": "金属3D打印/航空航天零部件",
+    "301526.SZ": "玻纤/复合材料",
+    "300779.SZ": "固废处理/资源化利用",
+    "600726.SH": "火电/煤电",
+    "000510.SZ": "氯碱化工/新材料",
+    "600110.SH": "铜箔/锂电材料",
+    "600367.SH": "钡盐/锰系材料",
+    "605196.SH": "电线电缆/电力设备",
+    "603608.SH": "鞋履制造/时尚消费",
+    "300100.SZ": "汽车零部件/智能底盘",
+    "688308.SH": "硬质合金刀具",
+    "688116.SH": "碳纳米管导电浆料",
+    "000712.SZ": "券商/金融服务",
+    "300353.SZ": "工业互联网/网络通信",
+    "300763.SZ": "光伏逆变器/储能逆变器",
+    "688690.SH": "纳米微球/色谱填料",
+    "000636.SZ": "MLCC/电子元件",
+    "002273.SZ": "光学元件/AR光波导",
+    "301319.SZ": "焊接材料/电子装联材料",
+    "600863.SH": "火电/风光电力",
+    "688478.SH": "半导体晶体生长设备",
+    "603663.SH": "锆系材料/镁铝合金",
+    "002251.SZ": "零售商超/消费复苏",
+    "605289.SH": "城市照明/文旅夜游",
+}
+
+RESEARCH_FALLBACK_MAP = {
+    "000815.SZ": {
+        "2025营收": "截至2026-04-03未见正式披露2025全年营收；2025H1营收1.74亿元，-64.73%；2025Q1营收8753.30万元，-62.84%。",
+        "同比": "全年同比暂未正式披露。",
+        "2026新订单/新增项目": "未单独披露新签订单；当前公开口径仍以机架、带宽、运维租赁为主，尚未直接提供GPU算力服务。",
+        "核心逻辑分析": "核心逻辑是中卫绿色数据中心和国资云资产重估，不是纯AI算力训练弹性。它更像IDC/云底座资产，估值上限取决于上架率、租赁单价和后续是否延伸到更高附加值算力运营。",
+        "核心用户及订单": "公开资料未逐一披露核心租户和新签订单金额，目前业务形态仍偏IDC租赁型客户。",
+        "核心竞争力": "优势在于西部低成本绿电+机房资源禀赋，以及国资背景带来的资源整合能力。",
+        "备注": "这只票要把“算力概念”与“实际业务”分开看。",
+    },
+    "301312.SZ": {
+        "2025营收": "截至2026-04-03未见正式披露2025年报。",
+        "同比": "暂未披露。",
+        "2026新订单/新增项目": "未见明确订单金额披露，市场交易主线集中在光模块设备、CPO检测与高速光通信景气。",
+        "核心逻辑分析": "公司处在高速光通信设备链条里，弹性来自光模块、CPO、硅光等高景气方向资本开支扩张。若头部客户继续扩产，它作为设备供应商通常先受益于上游扩产节奏。",
+        "核心用户及订单": "公开口径未完整实名披露，客户通常分布于光通信与消费电子制造链。",
+        "核心竞争力": "核心在高精度自动化设备和检测能力，能够切入高端光通信设备产线。",
+        "备注": "更适合按设备弹性股理解，而不是按平台型龙头理解。",
+    },
+    "688205.SH": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待公司正式披露口径确认。",
+        "2026新订单/新增项目": "未见单独披露新签订单金额，市场关注点集中在高速光模块、800G/1.6T与CPO链条景气。",
+        "核心逻辑分析": "德科立是高速光模块链条的重要弹性标的，景气来自AI算力拉动下的数据中心高速互联升级。它本质上赚的是光模块升级和份额提升的钱。",
+        "核心用户及订单": "公开资料通常不逐一实名披露客户，客户群体以主流光通信和数据中心链条客户为主。",
+        "核心竞争力": "强项在高速率产品迭代、光模块产品矩阵和数据中心场景渗透。",
+        "备注": "适合放在CPO/高速光互联主线里跟踪。",
+    },
+    "002222.SZ": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露新签订单金额，市场关注点在光学晶体、激光和AI光通信材料需求。",
+        "核心逻辑分析": "福晶科技的底层逻辑是光学晶体与激光器件平台，受益于激光、红外和部分光通信材料需求扩张。它不是最强弹性的终端环节，但具备上游材料卡位价值。",
+        "核心用户及订单": "客户分布在激光、光电子和科研工业链条，公开信息未完整实名披露全部头部客户。",
+        "核心竞争力": "核心壁垒在非线性光学晶体、生长和加工工艺积累，属于材料端长期壁垒。",
+        "备注": "更偏材料平台型公司，节奏通常慢于下游主题股。",
+    },
+    "688726.SH": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露新签订单金额，关注光通信设备及激光装备的资本开支周期。",
+        "核心逻辑分析": "拉普拉斯更偏设备和工艺装备弹性，受益于光通信与高端制造资本开支回暖。交易逻辑更偏“设备先行”。",
+        "核心用户及订单": "客户结构通常分布在光通信、高端制造及工艺设备需求方。",
+        "核心竞争力": "设备制造与工艺整合能力是核心，若下游扩产则容易获取订单弹性。",
+        "备注": "适合放在设备景气链里看。",
+    },
+    "001309.SZ": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露新签订单，市场焦点集中在存储主控、嵌入式存储和高端模组景气。",
+        "核心逻辑分析": "德明利本质是存储景气周期与国产替代共振标的。存储价格上行时，主控和模组链条盈利弹性会被迅速放大。",
+        "核心用户及订单": "客户覆盖消费电子、存储模组与终端应用链，公开资料未完整逐一实名披露。",
+        "核心竞争力": "强项在主控设计、模组整合以及存储价格周期中的经营弹性。",
+        "备注": "这只更偏存储景气股，不属于光通信主线。",
+    },
+    "600666.SH": {
+        "2025营收": "截至2026-04-03未见正式披露2025全年营收；2025前三季度营收3.48亿元，+19.54%。",
+        "同比": "全年同比暂未正式披露。",
+        "2026新订单/新增项目": "未单独披露2026新签订单；已公告扩展算力综合服务及相关技术服务采购协议。",
+        "核心逻辑分析": "奥瑞德的核心不是老蓝宝石业务，而是“困境反转 + 算力租赁/智算服务”双主线。若算力业务继续放量，估值锚可能从重组反转股切换到小市值算力服务弹性股。",
+        "核心用户及订单": "公开口径称客户扩展至人工智能和大模型场景，但未完整实名披露具体客户清单。",
+        "核心竞争力": "优势在于现有资产底座+转型智算服务的弹性；风险在于盈利质量和持续兑现仍需跟踪。",
+        "备注": "高弹性也高波动，适合放在情绪和兑现双线跟踪。",
+    },
+    "601908.SH": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露新签订单金额，跟踪点在硅片、光伏电站运营和新能源资产处置节奏。",
+        "核心逻辑分析": "京运通更偏光伏制造与电站运营双属性，弹性主要看产业链价格与资产回报，不属于AI主线。",
+        "核心用户及订单": "客户与订单更多分布于新能源制造和电站业务，公开信息未做完整实名披露。",
+        "核心竞争力": "核心在新能源资产和制造基础，而非主题性科技弹性。",
+        "备注": "若放在同一看板里，更多是做风格对照。",
+    },
+    "600522.SH": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，跟踪重点通常在海缆、电网投资与光通信业务景气。",
+        "核心逻辑分析": "中天科技是典型的‘海缆/电网/光通信’平台型龙头，胜在大体量和确定性，不胜在纯题材弹性。若你要做稳健主线观察，它是核心中军。",
+        "核心用户及订单": "客户主要分布在电网、电信运营商和能源基础设施项目，订单属性偏大项目。",
+        "核心竞争力": "强项在海缆、电力传输与通信产品的一体化平台能力，适合承接大项目。",
+        "备注": "偏中军，不是妖股型标的。",
+    },
+    "600487.SH": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，市场主线聚焦光通信、海缆和CPO映射。",
+        "核心逻辑分析": "亨通光电本质是‘海缆中军 + 光通信景气受益者’。海缆给确定性，光通信给弹性，因此它兼具机构偏好的稳健性和主题阶段的进攻性。",
+        "核心用户及订单": "客户以运营商、电网和大型工程客户为主，公开资料未完整逐一实名披露。",
+        "核心竞争力": "优势在平台大、业务线多、订单承接能力强，是典型景气主线中军。",
+        "备注": "交易上比小票慢，但趋势通常更稳。",
+    },
+    "002202.SZ": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露新签订单金额，跟踪重点在风机招标、出海和海风项目推进。",
+        "核心逻辑分析": "金风科技是风电整机龙头，交易逻辑主要跟风电装机周期和海风/出海进展走，不属于AI科技主线。",
+        "核心用户及订单": "客户主要是能源开发商和风电项目主体，订单大多体现为招标中标和项目储备。",
+        "核心竞争力": "龙头规模、整机技术和项目交付经验是核心护城河。",
+        "备注": "属于新能源主线观察标的。",
+    },
+    "600410.SH": {
+        "2025营收": "截至2026-04-03未在当前本地研究表中补入正式年报口径。",
+        "同比": "待正式披露。",
+        "2026新订单/新增项目": "未单独披露新签订单金额，交易重心在算力平台、系统集成和题材映射。",
+        "核心逻辑分析": "华胜天成是典型算力平台映射标的，更多赚的是市场对算力平台和系统集成能力的预期，而不是像硬件龙头那样靠极强业绩确定性驱动。",
+        "核心用户及订单": "客户主要分布于政府、企业数字化和算力平台相关场景，订单偏项目型。",
+        "核心竞争力": "系统集成、软件平台和算力概念映射是主要优势，但纯度不如专用算力硬件龙头。",
+        "备注": "更适合当情绪和风格观察位。",
+    },
+    "002281.SZ": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，市场主线围绕800G/1.6T光模块、硅光与CPO升级。",
+        "核心逻辑分析": "光迅科技是国内光器件与光模块核心平台之一，逻辑在于AI算力推动数据中心高速互联升级，产品升级和份额提升会同步增厚业绩。",
+        "核心用户及订单": "客户主要分布于运营商、数据中心和光通信设备链，公开口径未完整实名披露全部头部客户。",
+        "核心竞争力": "核心壁垒在光器件+光模块一体化能力、产品谱系广和量产交付能力。",
+        "备注": "偏主线中军，不是最极致的小票弹性。",
+    },
+    "300456.SZ": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，跟踪重点在MEMS、晶圆制造和半导体工艺平台进展。",
+        "核心逻辑分析": "赛微电子的逻辑在于MEMS与晶圆制造平台卡位，兼具国产替代和工艺平台弹性，不是单纯题材映射。",
+        "核心用户及订单": "客户覆盖MEMS器件及晶圆代工需求方，公开资料未完整实名披露。",
+        "核心竞争力": "晶圆制造工艺积累和MEMS平台能力是护城河，平台属性强于单一产品公司。",
+        "备注": "更偏半导体平台股，节奏和纯光模块链不同。",
+    },
+    "688195.SH": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，交易关注点集中在CPO、光引擎与高速光学元件放量。",
+        "核心逻辑分析": "腾景科技处在高速光学元件链条里，受益于AI数据中心升级带来的CPO和高速光模块需求扩张。",
+        "核心用户及订单": "客户分布于光通信、激光和高端制造链，公开资料未完整实名披露。",
+        "核心竞争力": "精密光学制造和高端光学元件量产能力是核心壁垒。",
+        "备注": "弹性偏光学零部件，不完全等同于整机光模块。",
+    },
+    "002730.SZ": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，市场更多交易其电源设备、矿用防爆及算力配套映射。",
+        "核心逻辑分析": "电光科技更偏设备与配套映射逻辑，行情弹性主要来自主题扩散而非确定性业绩主升。",
+        "核心用户及订单": "客户分布于煤矿装备及工业电气领域，公开资料未完整实名披露。",
+        "核心竞争力": "工业电气与矿用防爆设备基础较扎实，题材扩散阶段具备辨识度。",
+        "备注": "偏题材弹性位，需更重视情绪周期。",
+    },
+    "300570.SZ": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，跟踪重点在高速光模块、数据中心互联及海外需求。",
+        "核心逻辑分析": "太辰光是高速光器件与连接方案受益标的，AI算力拉动下的数据中心互联升级会提升其产品需求。",
+        "核心用户及订单": "客户主要分布于海外与国内光通信链条，公开口径未完整实名披露。",
+        "核心竞争力": "高端光器件与连接产品能力较强，受益于海外数据中心景气。",
+        "备注": "更偏海外映射和高景气细分环节。",
+    },
+    "688008.SH": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，核心跟踪点是DDR5、内存接口芯片和服务器平台迭代。",
+        "核心逻辑分析": "澜起科技是服务器芯片与内存接口芯片龙头，业绩逻辑更偏基本面兑现，不是纯题材股。",
+        "核心用户及订单": "客户覆盖服务器和云计算产业链核心厂商，公开资料未完整实名披露全部客户。",
+        "核心竞争力": "芯片设计能力、产品代际领先和服务器生态卡位是核心护城河。",
+        "备注": "属于机构重仓型半导体龙头。",
+    },
+    "688307.SH": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，跟踪重点在机器视觉和精密光学业务扩张。",
+        "核心逻辑分析": "中润光学的逻辑在于高端光学镜头和机器视觉，属于AI视觉和工业检测链的细分卡位公司。",
+        "核心用户及订单": "客户主要在机器视觉、安防和工业光学场景，公开资料未完整实名披露。",
+        "核心竞争力": "精密光学设计与制造能力较强，细分领域壁垒高于普通消费镜头。",
+        "备注": "偏细分成长股，流动性和波动都更高。",
+    },
+    "301205.SZ": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，市场聚焦高速光模块、800G/1.6T及CPO映射。",
+        "核心逻辑分析": "联特科技是高弹性的高速光模块链标的，受益于AI算力对高速互联的持续拉动。",
+        "核心用户及订单": "客户主要分布于光通信和数据中心链，公开资料未完整实名披露。",
+        "核心竞争力": "高速率光模块产品迭代快，景气周期中盈利弹性大。",
+        "备注": "属于高弹性主线票，波动也更大。",
+    },
+    "603929.SH": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，跟踪重点在半导体洁净厂房和高端制造厂务工程订单。",
+        "核心逻辑分析": "亚翔集成本质是半导体洁净工程受益股，赚的是晶圆厂和高端制造扩产的钱。",
+        "核心用户及订单": "客户以半导体与高端制造项目方为主，订单偏工程项目型。",
+        "核心竞争力": "洁净工程交付经验和半导体厂务工程能力是核心壁垒。",
+        "备注": "更偏工程订单兑现，不属于纯科技题材票。",
+    },
+    "600072.SH": {
+        "2026新订单/新增项目": "未单独披露2026新签订单金额，跟踪点在船舶装备、新能源工程和资产整合节奏。",
+        "核心逻辑分析": "中船科技更偏中字头装备和新能源工程逻辑，行情驱动常来自资产整合与订单预期。",
+        "核心用户及订单": "客户主要分布于船舶工业和大型工程项目，订单偏大项目型。",
+        "核心竞争力": "央企平台背景和工程装备能力是主要护城河。",
+        "备注": "风格上更偏中字头和工程装备。",
+    },
+}
+
+
+def normalize_code(code: str) -> str:
+    if code.endswith((".SZ", ".SH")):
+        return code
+    return f"{code}.SH" if code.startswith(("5", "6", "9")) else f"{code}.SZ"
+
+
+def load_research_rows() -> dict[str, dict[str, str]]:
+    if not DEEP_DIVE_CSV.exists():
+        return {}
+    rows = list(csv.DictReader(DEEP_DIVE_CSV.open(encoding="utf-8-sig")))
+    out: dict[str, dict[str, str]] = {}
+    for row in rows:
+        code = normalize_code(row["代码"])
+        out[code] = row
+    return out
+
+
+@lru_cache(maxsize=1)
+def load_q1_financial_rows() -> dict[str, dict[str, str]]:
+    q1_path = OUT_DIR / f"watchlist_q1_financials_{AS_OF.isoformat()}.json"
+    if not q1_path.exists():
+        candidates = sorted(OUT_DIR.glob("watchlist_q1_financials_*.json"))
+        if not candidates:
+            return {}
+        q1_path = candidates[-1]
+    rows = json.loads(q1_path.read_text(encoding="utf-8"))
+    out: dict[str, dict[str, str]] = {}
+    for row in rows:
+        code = normalize_code(str(row.get("code", "")))
+        if not code:
+            continue
+        out[code] = {
+            "q1Revenue2026": str(row.get("revenue_text") or ""),
+            "q1RevenueYoY2026": str(row.get("revenue_yoy_text") or ""),
+            "q1NetProfit2026": str(row.get("net_profit_text") or ""),
+            "q1NetProfitYoY2026": str(row.get("net_profit_yoy_text") or ""),
+        }
+    return out
+
+
+def build_watchlist(research_map: dict[str, dict[str, str]]) -> list[tuple[str, str]]:
+    merged = list(WATCHLIST_BASE)
+    seen = {code for _, code in merged}
+    for row in research_map.values():
+        code = normalize_code(row["代码"])
+        if code in seen:
+            continue
+        merged.append((row["股票"], code))
+        seen.add(code)
+    return merged
+
+
+def build_session() -> requests.Session:
+    session = requests.Session()
+    session.trust_env = TRUST_ENV
+    return session
+
+
+def get_refresh_token() -> str:
+    return (
+        os.environ.get("ASTOCK_IFIND_REFRESH_TOKEN", "").strip()
+        or os.environ.get("IFIND_REFRESH_TOKEN", "").strip()
+        or REFRESH_TOKEN
+    )
+
+
+def decode_refresh_token_metadata(token: str) -> dict[str, object]:
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    try:
+        payload = json.loads(base64.b64decode(parts[1]).decode("utf-8"))
+    except Exception:
+        return {}
+    user = payload.get("user") or {}
+    return {
+        "uid": payload.get("uid"),
+        "userId": user.get("userId"),
+        "refreshTokenExpiredTime": user.get("refreshTokenExpiredTime"),
+    }
+
+
+def assert_refresh_token_not_expired(token: str) -> None:
+    meta = decode_refresh_token_metadata(token)
+    expiry = meta.get("refreshTokenExpiredTime")
+    if not expiry:
+        return
+    try:
+        expiry_dt = datetime.strptime(str(expiry), "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone(timedelta(hours=8))
+        )
+    except ValueError:
+        return
+    now_dt = datetime.now(timezone(timedelta(hours=8)))
+    if expiry_dt <= now_dt:
+        raise RuntimeError(
+            "iFinD refresh token expired at "
+            f"{expiry_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}. "
+            "Set ASTOCK_IFIND_REFRESH_TOKEN (or IFIND_REFRESH_TOKEN) to a fresh token."
+        )
+
+
+def get_access_token() -> str:
+    token = get_refresh_token()
+    assert_refresh_token_not_expired(token)
+    session = build_session()
+    try:
+        resp = session.post(
+            f"{BASE_URL}/get_access_token",
+            headers={"Content-Type": "application/json", "refresh_token": token},
+            timeout=20,
+        )
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(
+            "Failed to reach iFinD token endpoint "
+            f"{BASE_URL}/get_access_token. "
+            f"trust_env={session.trust_env}. Check DNS/network/proxy settings."
+        ) from exc
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload["data"]["access_token"]
+
+
+def batched(seq: list[str], size: int) -> list[list[str]]:
+    return [seq[i : i + size] for i in range(0, len(seq), size)]
+
+
+def fetch_history(access_token: str, codes: list[str] | None = None) -> dict[str, dict]:
+    if codes is None:
+        codes = [code for _, code in build_watchlist(load_research_rows())]
+    session = build_session()
+    out: dict[str, dict] = {}
+
+    def pull(batch_codes: list[str]) -> None:
+        if not batch_codes:
+            return
+        payload = {
+            "codes": ",".join(batch_codes),
+            "indicators": "open,high,low,close,volume,amount",
+            "startdate": (AS_OF - timedelta(days=45)).strftime("%Y-%m-%d"),
+            "enddate": AS_OF.strftime("%Y-%m-%d"),
+            "functionpara": {"Fill": "Blank"},
+        }
+        try:
+            resp = session.post(
+                f"{BASE_URL}/cmd_history_quotation",
+                json=payload,
+                headers={"Content-Type": "application/json", "access_token": access_token},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            out.update({row["thscode"]: row for row in resp.json()["tables"]})
+        except Exception:
+            if len(batch_codes) == 1:
+                return
+            mid = len(batch_codes) // 2
+            pull(batch_codes[:mid])
+            pull(batch_codes[mid:])
+
+    for batch_codes in batched(codes, 40):
+        pull(batch_codes)
+
+    missing = [code for code in codes if code not in out]
+    if missing:
+        for batch_codes in batched(missing, 8):
+            pull(batch_codes)
+
+    missing = [code for code in codes if code not in out]
+    if missing:
+        for code in missing:
+            pull([code])
+    return out
+
+
+def fetch_basic(access_token: str, codes: list[str] | None = None) -> dict[str, dict]:
+    if codes is None:
+        codes = [code for _, code in build_watchlist(load_research_rows())]
+    session = build_session()
+    out: dict[str, dict] = {}
+
+    def pull(batch_codes: list[str]) -> None:
+        if not batch_codes:
+            return
+        payload = {
+            "codes": ",".join(batch_codes),
+            "indipara": [
+                {"indicator": "ths_total_shares_stock", "indiparams": [AS_OF.strftime("%Y%m%d")]},
+                {"indicator": "ths_free_float_shares_stock", "indiparams": [AS_OF.strftime("%Y%m%d")]},
+                {"indicator": "ths_close_price_stock", "indiparams": [AS_OF.strftime("%Y%m%d"), "", ""]},
+            ],
+        }
+        try:
+            resp = session.post(
+                f"{BASE_URL}/basic_data_service",
+                json=payload,
+                headers={"Content-Type": "application/json", "access_token": access_token},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            out.update({row["thscode"]: row["table"] for row in resp.json()["tables"]})
+        except Exception:
+            if len(batch_codes) == 1:
+                return
+            mid = len(batch_codes) // 2
+            pull(batch_codes[:mid])
+            pull(batch_codes[mid:])
+
+    for batch_codes in batched(codes, 60):
+        pull(batch_codes)
+    return out
+
+
+def fetch_realtime_map(access_token: str, codes: list[str], trade_date: date | None = None) -> dict[str, dict]:
+    if not codes:
+        return {}
+    if trade_date is None:
+        trade_date = AS_OF
+    session = build_session()
+    out: dict[str, dict] = {}
+    for batch_codes in batched(codes, 80):
+        payload = {
+            "codes": ",".join(batch_codes),
+            "indicators": "latest,volume,amount,changeRatio",
+            "starttime": f"{trade_date.isoformat()} 14:55:00",
+            "endtime": f"{trade_date.isoformat()} 15:00:00",
+        }
+        resp = session.post(
+            f"{BASE_URL}/real_time_quotation",
+            json=payload,
+            headers={"Content-Type": "application/json", "access_token": access_token},
+            timeout=40,
+        )
+        resp.raise_for_status()
+        for item in resp.json().get("tables", []):
+            out[item["thscode"]] = item.get("table") or {}
+    return out
+
+
+def fetch_order_book_snapshots(access_token: str, codes: list[str]) -> dict[str, dict]:
+    indicators = (
+        "latest,"
+        "bid1,bid2,bid3,bid4,bid5,"
+        "ask1,ask2,ask3,ask4,ask5,"
+        "bidSize1,bidSize2,bidSize3,bidSize4,bidSize5,"
+        "askSize1,askSize2,askSize3,askSize4,askSize5"
+    )
+    payload = {
+        "codes": ",".join(codes),
+        "indicators": indicators,
+        "starttime": f"{AS_OF.isoformat()} 14:55:00",
+        "endtime": f"{AS_OF.isoformat()} 15:00:00",
+    }
+    session = build_session()
+    resp = session.post(
+        f"{BASE_URL}/snap_shot",
+        json=payload,
+        headers={"Content-Type": "application/json", "access_token": access_token},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    snapshots: dict[str, dict] = {}
+    for row in resp.json().get("tables", []):
+        times = row.get("time") or []
+        table = row.get("table") or {}
+        if not times:
+            continue
+        last_idx = len(times) - 1
+        snapshots[row["thscode"]] = {
+            "time": times[last_idx],
+            "latest": (table.get("latest") or [None])[last_idx] if table.get("latest") else None,
+            "bids": [
+                {
+                    "level": level,
+                    "price": (table.get(f"bid{level}") or [None])[last_idx] if table.get(f"bid{level}") else None,
+                    "size": (table.get(f"bidSize{level}") or [None])[last_idx] if table.get(f"bidSize{level}") else None,
+                }
+                for level in range(1, 6)
+            ],
+            "asks": [
+                {
+                    "level": level,
+                    "price": (table.get(f"ask{level}") or [None])[last_idx] if table.get(f"ask{level}") else None,
+                    "size": (table.get(f"askSize{level}") or [None])[last_idx] if table.get(f"askSize{level}") else None,
+                }
+                for level in range(1, 6)
+            ],
+        }
+    return snapshots
+
+
+def fmt_yi(value: float) -> str:
+    return f"{value / 1e8:,.2f}亿"
+
+
+def fmt_wan_shou(volume: float) -> str:
+    return f"{volume / 1e4:,.2f}万手"
+
+
+def fmt_yi_rmb(value: float) -> str:
+    return f"{value / 1e8:,.2f}亿"
+
+
+def fetch_industry(code: str) -> str:
+    secid = ("1." if code.split(".")[0].startswith(("5", "6", "9")) else "0.") + code.split(".")[0]
+    try:
+        session = build_session()
+        resp = session.get(
+            "https://push2.eastmoney.com/api/qt/stock/get",
+            params={"invt": "2", "fltt": "2", "fields": "f100", "secid": secid},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return str((resp.json().get("data") or {}).get("f100") or "")
+    except Exception:
+        return ""
+
+
+def fetch_total_market_cap(code: str) -> float:
+    secid = ("1." if code.split(".")[0].startswith(("5", "6", "9")) else "0.") + code.split(".")[0]
+    try:
+        session = build_session()
+        resp = session.get(
+            "https://push2.eastmoney.com/api/qt/stock/get",
+            params={"invt": "2", "fltt": "2", "fields": "f116", "secid": secid},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return float((resp.json().get("data") or {}).get("f116") or 0)
+    except Exception:
+        return 0.0
+
+
+def fetch_pe_ratios(access_token: str, codes: list[str]) -> dict[str, float | None]:
+    payload = {
+        "codes": ",".join(codes),
+        "indipara": [
+            {"indicator": "ths_pe_ttm_stock", "indiparams": [AS_OF.strftime("%Y%m%d")]},
+        ],
+    }
+    session = build_session()
+    resp = session.post(
+        f"{BASE_URL}/basic_data_service",
+        json=payload,
+        headers={"Content-Type": "application/json", "access_token": access_token},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    out: dict[str, float | None] = {}
+    for row in resp.json().get("tables", []):
+        values = row.get("table", {}).get("ths_pe_ttm_stock") or [None]
+        value = values[0]
+        out[row["thscode"]] = None if value in (None, "", "-") else float(value)
+    return out
+
+
+def fetch_margin_financing_map(codes: list[str]) -> dict[str, dict[str, float | str | None]]:
+    out: dict[str, dict[str, float | str | None]] = {}
+    for code in codes:
+        raw_code, market = code.split(".")
+        try:
+            payload = fetch_json(
+                "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                {
+                    "reportName": "RPTA_WEB_RZRQ_GGMX",
+                    "columns": "DATE,SCODE,SECNAME,RZYE,RQYE,RZMRE,SECUCODE",
+                    "source": "WEB",
+                    "sortColumns": "DATE",
+                    "sortTypes": "-1",
+                    "pageNumber": "1",
+                    "pageSize": "1",
+                    "filter": f"(SECUCODE=\"{raw_code}.{market}\")(DATE<='{AS_OF.isoformat()}')",
+                },
+                timeout=20,
+            )
+            rows = (payload.get("result") or {}).get("data") or []
+            if not rows:
+                raise ValueError("empty margin financing rows")
+            row = rows[0]
+            out[code] = {
+                "date": str(row.get("DATE") or "").split(" ")[0],
+                "finBalance": to_float(row.get("RZYE")),
+                "loanBalance": to_float(row.get("RQYE")),
+                "finBuyAmount": to_float(row.get("RZMRE")),
+            }
+        except Exception:
+            out[code] = {
+                "date": "",
+                "finBalance": None,
+                "loanBalance": None,
+                "finBuyAmount": None,
+            }
+    return out
+
+
+def to_float(value) -> float | None:
+    if value in (None, "", "-"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def code_to_secid(code: str) -> str:
+    raw = code.split(".")[0]
+    if raw.startswith(("5", "6", "9")):
+        return f"1.{raw}"
+    return f"0.{raw}"
+
+
+def fetch_json(url: str, params: dict, timeout: int = 15, retries: int = 2) -> dict:
+    last_error = None
+    for attempt in range(retries):
+        try:
+            session = build_session()
+            resp = session.get(url, params=params, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < retries:
+                continue
+    raise RuntimeError(f"request failed: {url} {params} err={last_error}")
+
+
+def fetch_public_kline(code: str, as_of: date) -> list[list[float | str]]:
+    start = (as_of - timedelta(days=75)).strftime("%Y%m%d")
+    try:
+        payload = fetch_json(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+            {
+                "secid": code_to_secid(code),
+                "fields1": "f1,f2,f3,f4,f5,f6",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                "klt": "101",
+                "fqt": "1",
+                "beg": start,
+                "end": as_of.strftime("%Y%m%d"),
+            },
+            timeout=5,
+            retries=1,
+        )
+        data = ((payload.get("data") or {}).get("klines") or [])
+        rows: list[list[float | str]] = []
+        for row in data:
+            parts = str(row).split(",")
+            if len(parts) < 7:
+                continue
+            rows.append(
+                [
+                    str(parts[0]),
+                    float(parts[1]),
+                    float(parts[2]),
+                    float(parts[4]),
+                    float(parts[3]),
+                    float(parts[5]) * 100.0,
+                    float(parts[6]),
+                ]
+            )
+        if rows:
+            return rows
+    except Exception:
+        pass
+
+    market_prefix = "sh" if code.split(".")[0].startswith(("5", "6", "9")) else "sz"
+    symbol = f"{market_prefix}{code.split('.')[0]}"
+    session = build_session()
+    resp = session.get(
+        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        params={"param": f"{symbol},day,{(as_of - timedelta(days=75)).isoformat()},{as_of.isoformat()},640,qfq"},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    data = (((payload.get("data") or {}).get(symbol) or {}).get("qfqday") or [])
+    rows: list[list[float | str]] = []
+    for row in data:
+        if len(row) < 6:
+            continue
+        rows.append(
+            [
+                str(row[0]),
+                float(row[1]),
+                float(row[2]),
+                float(row[4]),
+                float(row[3]),
+                float(row[5]) * 100.0,
+                0.0,
+            ]
+        )
+    return rows
+
+
+def update_row_from_public_kline(row: dict, as_of: date) -> dict:
+    code = row["code"]
+    prev_close = float(row.get("latestClose") or 0.0)
+    prev_total_cap = float(row.get("totalMarketCap") or 0.0)
+    prev_float_cap = float(row.get("floatMarketCap") or 0.0)
+    total_shares = (prev_total_cap / prev_close) if prev_close else 0.0
+    float_shares = (prev_float_cap / prev_close) if prev_close else 0.0
+    snapshot = fetch_quote_snapshot(code)
+    public_kline = fetch_public_kline(code, as_of)
+    old_amount_by_date = {
+        k[0]: k[6]
+        for k in row.get("kline", [])
+        if isinstance(k, list) and len(k) >= 7
+    }
+    kline = []
+    for item in public_kline[-30:]:
+        trade_date, open_px, close_px, low_px, high_px, volume, amount = item
+        amount = snapshot.get("todayAmount") if trade_date == as_of.isoformat() and snapshot.get("todayAmount") else amount
+        amount = old_amount_by_date.get(trade_date, amount) if not amount else amount
+        kline.append([trade_date, open_px, close_px, low_px, high_px, volume, amount])
+
+    if kline and kline[-1][0] < as_of.isoformat() and snapshot.get("latestClose"):
+        prev_close_for_bar = float(kline[-1][2])
+        latest_close_for_bar = float(snapshot["latestClose"])
+        kline.append(
+            [
+                as_of.isoformat(),
+                prev_close_for_bar,
+                latest_close_for_bar,
+                min(prev_close_for_bar, latest_close_for_bar),
+                max(prev_close_for_bar, latest_close_for_bar),
+                float(snapshot.get("todayVolume") or 0.0),
+                float(snapshot.get("todayAmount") or old_amount_by_date.get(as_of.isoformat(), 0.0) or 0.0),
+            ]
+        )
+        kline = kline[-30:]
+
+    if kline:
+        row["kline"] = kline
+        row["latestClose"] = float(kline[-1][2])
+        row["todayVolume"] = float(kline[-1][5])
+        row["todayAmount"] = float(kline[-1][6]) or 0.0
+        ref_close = float(kline[-2][2]) if len(kline) >= 2 else None
+        row["todayPct"] = ((row["latestClose"] / ref_close - 1.0) * 100.0) if ref_close else row.get("todayPct")
+        last5 = []
+        prev = None
+        for item in kline[-5:]:
+            pct = None if prev is None else (float(item[2]) / prev - 1.0) * 100.0
+            last5.append(
+                {
+                    "date": item[0],
+                    "close": float(item[2]),
+                    "volume": float(item[5]),
+                    "amount": float(item[6]),
+                    "pct": pct,
+                }
+            )
+            prev = float(item[2])
+        row["last5"] = last5
+
+    if snapshot.get("latestClose"):
+        row["latestClose"] = float(snapshot["latestClose"])
+    if snapshot.get("todayPct") is not None:
+        row["todayPct"] = float(snapshot["todayPct"])
+    if snapshot.get("todayVolume"):
+        row["todayVolume"] = float(snapshot["todayVolume"])
+    if snapshot.get("todayAmount"):
+        row["todayAmount"] = float(snapshot["todayAmount"])
+    if snapshot.get("turnoverRate") is not None:
+        row["turnoverRate"] = float(snapshot["turnoverRate"])
+    if total_shares and row.get("latestClose"):
+        row["totalMarketCap"] = total_shares * float(row["latestClose"])
+    if float_shares and row.get("latestClose"):
+        row["floatMarketCap"] = float_shares * float(row["latestClose"])
+    return row
+
+
+def fetch_top5_shareholders(code: str) -> dict[str, str | float | list[str]]:
+    try:
+        base = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        date_payload = fetch_json(
+            base,
+            {
+                "reportName": "RPT_F10_EH_HOLDERSDATE",
+                "columns": "END_DATE,REPORT_DATE_NAME",
+                "sortColumns": "END_DATE",
+                "sortTypes": "-1",
+                "pageSize": "1",
+                "pageNumber": "1",
+                "source": "WEB",
+                "client": "WEB",
+                "filter": f'(SECURITY_CODE="{code.split(".")[0]}")',
+            },
+            timeout=15,
+        )
+        date_rows = (date_payload.get("result") or {}).get("data") or []
+        if not date_rows:
+            return {"reportDate": "", "totalRatio": None, "holders": []}
+        end_date = date_rows[0].get("END_DATE") or ""
+        report_date = str(end_date)[:10]
+
+        holder_payload = fetch_json(
+            base,
+            {
+                "reportName": "RPT_DMSK_HOLDERS",
+                "columns": "ALL",
+                "sortColumns": "RANK",
+                "sortTypes": "1",
+                "pageSize": "5",
+                "pageNumber": "1",
+                "source": "WEB",
+                "client": "WEB",
+                "filter": f'(SECURITY_CODE="{code.split(".")[0]}")(END_DATE=\'{report_date}\')(LISTING_STATE<>"10")',
+            },
+            timeout=15,
+        )
+        rows = (holder_payload.get("result") or {}).get("data") or []
+        holders: list[str] = []
+        total_ratio = 0.0
+        has_ratio = False
+        for idx, row in enumerate(rows[:5], start=1):
+            name = str(row.get("HOLDER_NAME") or "").strip()
+            ratio = row.get("HOLD_RATIO")
+            if not name:
+                continue
+            ratio_text = ""
+            if ratio not in (None, "", "-"):
+                try:
+                    ratio_value = float(ratio)
+                    total_ratio += ratio_value
+                    has_ratio = True
+                    ratio_text = f" ({ratio_value:.2f}%)"
+                except Exception:
+                    ratio_text = f" ({ratio}%)"
+            holders.append(f"{idx}. {name}{ratio_text}")
+        return {
+            "reportDate": report_date,
+            "totalRatio": round(total_ratio, 2) if has_ratio else None,
+            "holders": holders,
+        }
+    except Exception:
+        return {"reportDate": "", "totalRatio": None, "holders": []}
+
+
+def fetch_top3_business_segments(code: str) -> dict[str, str | list[dict[str, float | str | None]]]:
+    try:
+        raw, market = code.split(".")
+        symbol = f"{market.upper()}{raw}"
+        resp = requests.get(
+            "https://emweb.securities.eastmoney.com/PC_HSF10/BusinessAnalysis/PageAjax",
+            params={"code": symbol},
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": f"https://emweb.securities.eastmoney.com/PC_HSF10/BusinessAnalysis/Index?type=web&code={symbol}",
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        rows = payload.get("zygcfx") or []
+        if not rows:
+            return {"reportDate": "", "category": "", "items": []}
+
+        latest_report = ""
+        for row in rows:
+            report_date = str(row.get("REPORT_DATE") or "")[:10]
+            if report_date and report_date > latest_report:
+                latest_report = report_date
+        if not latest_report:
+            return {"reportDate": "", "category": "", "items": []}
+
+        latest_rows = [row for row in rows if str(row.get("REPORT_DATE") or "")[:10] == latest_report]
+        category_priority = [("2", "按产品分类"), ("1", "按行业分类"), ("3", "按地区分类")]
+        chosen_rows: list[dict] = []
+        chosen_category = ""
+        for category_code, category_name in category_priority:
+            bucket = [row for row in latest_rows if str(row.get("MAINOP_TYPE") or "") == category_code]
+            if bucket:
+                chosen_rows = bucket
+                chosen_category = category_name
+                break
+        if not chosen_rows:
+            return {"reportDate": latest_report, "category": "", "items": []}
+
+        chosen_rows.sort(key=lambda row: to_float(row.get("MAIN_BUSINESS_INCOME")) or 0.0, reverse=True)
+        items: list[dict[str, float | str | None]] = []
+        for row in chosen_rows[:3]:
+            items.append(
+                {
+                    "name": str(row.get("ITEM_NAME") or "").strip(),
+                    "revenue": to_float(row.get("MAIN_BUSINESS_INCOME")),
+                    "ratio": to_float(row.get("MBI_RATIO")),
+                }
+            )
+        return {"reportDate": latest_report, "category": chosen_category, "items": items}
+    except Exception:
+        return {"reportDate": "", "category": "", "items": []}
+
+
+def clean_news_title(title: str) -> str:
+    return re.sub(r"\s+", " ", str(title or "")).strip().replace("｜", "-").replace("|", "-").replace("_", "-")
+
+
+def summarize_news_title(title: str, name: str) -> str:
+    cleaned = clean_news_title(title)
+    cleaned = re.sub(rf"^{re.escape(name)}[（(]?\d{{6}}[)）]?", "", cleaned).strip(" -:")
+    cleaned = re.sub(r"\s*-\s*(证券之星|中金在线|Sohu|新浪财经|东方财富|中财网|财联社|同花顺财经|界面新闻|第一财经).*$", "", cleaned)
+    return cleaned or clean_news_title(title)
+
+
+def parse_news_pub_date(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return parsedate_to_datetime(value).astimezone(AS_OF_DT.tzinfo)
+    except Exception:
+        return None
+
+
+def score_news_title(title: str, pub_dt: datetime | None) -> int:
+    score = 0
+    for keyword, value in POSITIVE_NEWS_KEYWORDS.items():
+        if keyword in title:
+            score += value
+    for keyword, value in NEGATIVE_NEWS_KEYWORDS.items():
+        if keyword in title:
+            score += value
+    if pub_dt is not None:
+        age_hours = max((AS_OF_DT - pub_dt).total_seconds() / 3600.0, 0)
+        if age_hours <= 24:
+            score += 40
+        elif age_hours <= 48:
+            score += 26
+        elif age_hours <= 72:
+            score += 14
+        else:
+            score -= 50
+    return score
+
+
+def infer_main_business_from_text(text: str) -> str:
+    content = (text or "").upper()
+    for keyword, label in BUSINESS_KEYWORD_MAP:
+        if keyword.upper() in content:
+            return label
+    return ""
+
+
+def has_valid_recent_news(news: dict[str, str] | None) -> bool:
+    if not news:
+        return False
+    summary = (news.get("summary") or "").strip()
+    if not summary:
+        return False
+    if "未筛到高质量公告或媒体新闻" in summary:
+        return False
+    recent_flag = news.get("isRecent")
+    if recent_flag is not None:
+        return bool(recent_flag)
+    return True
+
+
+def matches_mainline_business(value: str | None) -> bool:
+    text = (value or "").strip()
+    if not text or text == "-":
+        return False
+    return any(keyword in text for keyword in MAINLINE_KEYWORDS)
+
+
+def strong_stock_passes_final_filters(row: dict) -> bool:
+    pct = row.get("todayPct")
+    total_cap = row.get("totalMarketCap") or 0
+    amount = row.get("todayAmount") or 0
+    turnover = row.get("turnoverRate")
+    if pct is None or pct <= STRONG_MIN_PCT:
+        return False
+    if total_cap < STRONG_MIN_TOTAL_CAP or total_cap > STRONG_MAX_TOTAL_CAP:
+        return False
+    if amount < STRONG_MIN_AMOUNT:
+        return False
+    if turnover is None or turnover <= STRONG_MIN_TURNOVER or turnover > STRONG_MAX_TURNOVER:
+        return False
+    return True
+
+
+def score_strong_stock(row: dict, watch_codes: set[str] | None = None) -> float:
+    score = 0.0
+    if matches_mainline_business(row.get("mainBusiness")):
+        score += 40.0
+        text = row.get("mainBusiness") or ""
+        for keyword in ("CPO", "光模块", "存储", "PCB", "算力", "连接器", "液冷"):
+            if keyword in text:
+                score += 6.0
+    news = row.get("latestNews") or {}
+    if has_valid_recent_news(news):
+        score += 28.0
+        if news.get("isRecent"):
+            score += 12.0
+    amount = float(row.get("todayAmount") or 0.0)
+    score += min(amount / 1e8, 120.0) * 0.45
+    pct = float(row.get("todayPct") or 0.0)
+    score += min(max(pct, 0.0), 20.0) * 2.8
+    turnover = row.get("turnoverRate")
+    if turnover is not None:
+        turnover = float(turnover)
+        if 8.0 <= turnover <= 18.0:
+            score += 18.0
+        elif 6.0 <= turnover < 8.0 or 18.0 < turnover <= 22.0:
+            score += 10.0
+        elif 22.0 < turnover <= 25.0:
+            score += 4.0
+    total_cap = float(row.get("totalMarketCap") or 0.0)
+    if 1.2e10 <= total_cap <= 8e10:
+        score += 8.0
+    elif 8e10 < total_cap <= 2e11:
+        score += 4.0
+    if watch_codes and row.get("code") in watch_codes:
+        score += 8.0
+    return round(score, 4)
+
+
+def finalize_strong_stocks(rows: list[dict], watch_codes: set[str] | None = None) -> list[dict]:
+    filtered = [row for row in rows if strong_stock_passes_final_filters(row)]
+    for row in filtered:
+        row["strongScore"] = score_strong_stock(row, watch_codes)
+    filtered.sort(
+        key=lambda row: (
+            row.get("strongScore") or 0,
+            row.get("todayAmount") or 0,
+            row.get("todayPct") or 0,
+        ),
+        reverse=True,
+    )
+    return filtered[:STRONG_DISPLAY_LIMIT]
+
+
+def strip_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text or "").strip()
+
+
+def fetch_eastmoney_notice_news(session: requests.Session, name: str, code: str) -> dict[str, str]:
+    payload = {
+        "uid": "",
+        "keyword": name,
+        "type": ["noticeWeb"],
+        "client": "web",
+        "clientVersion": "curr",
+        "clientType": "web",
+        "param": {
+            "noticeWeb": {
+                "preTag": '<em class="red">',
+                "postTag": "</em>",
+                "pageSize": 8,
+                "pageIndex": 1,
+            }
+        },
+    }
+    try:
+        url = "https://search-api-web.eastmoney.com/search/jsonp?" + urllib.parse.urlencode(
+            {"cb": "cb", "param": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
+        )
+        completed = subprocess.run(
+            ["curl", "-A", NEWS_UA, "-sS", url],
+            capture_output=True,
+            text=True,
+            timeout=12,
+            check=True,
+        )
+        match = re.search(r"^[^(]+\((.*)\)\s*$", completed.stdout, re.S)
+        if not match:
+            return {"time": "", "summary": "", "title": "", "link": "", "isRecent": False}
+        data = json.loads(match.group(1))
+        notices = ((data.get("result") or {}).get("noticeWeb") or [])
+        candidates: list[tuple[int, datetime | None, str, str]] = []
+        plain_code = code.split(".")[0]
+        for item in notices:
+            title = clean_news_title(strip_tags(item.get("title") or item.get("shortTitle") or ""))
+            link = (item.get("url") or "").strip()
+            security_name = strip_tags(item.get("securityFullName") or "")
+            raw_date = (item.get("date") or "").strip()
+            pub = None
+            if raw_date:
+                try:
+                    pub = datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone(timedelta(hours=8)))
+                except ValueError:
+                    try:
+                        pub = datetime.strptime(raw_date, "%Y-%m-%d").replace(tzinfo=timezone(timedelta(hours=8)))
+                    except ValueError:
+                        pub = None
+            if not title or not link:
+                continue
+            score = score_news_title(title, pub) + 10
+            is_match = (
+                security_name == name
+                or plain_code in link
+                or (name in title and (not security_name or security_name == name))
+            )
+            if is_match:
+                candidates.append((score, pub, title, link))
+        candidates.sort(key=lambda row: (row[0], row[1] or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+        best = candidates[0] if candidates else None
+        if not best:
+            return {"time": "", "summary": "", "title": "", "link": "", "isRecent": False}
+        _, pub, title, link = best
+        is_recent = bool(pub and pub >= AS_OF_DT - timedelta(days=NEWS_LOOKBACK_DAYS))
+        return {
+            "time": pub.strftime("%m-%d %H:%M") if pub else "",
+            "summary": summarize_news_title(title, name),
+            "title": title,
+            "link": link,
+            "isRecent": is_recent,
+        }
+    except Exception:
+        return {"time": "", "summary": "", "title": "", "link": "", "isRecent": False}
+
+
+def fetch_latest_news_map(stocks: list[tuple[str, str]]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    session = build_session()
+    session.headers.update({"User-Agent": NEWS_UA})
+    for name, code in stocks:
+        out[code] = fetch_eastmoney_notice_news(session, name, code)
+    return out
+
+
+def fetch_strong_stock_candidates(trade_date: date) -> list[dict]:
+    page = 1
+    rows: list[dict] = []
+    trade_date_text = trade_date.isoformat()
+    while True:
+        payload = fetch_json(
+            FUNDFLOW_API,
+            {
+                "type": "RPT_DMSK_TS_FUNDFLOWHIS",
+                "sty": "ALL",
+                "source": "SECURITIES",
+                "client": "APP",
+                "st": "TRADE_DATE",
+                "sr": "-1",
+                "p": str(page),
+                "ps": "500",
+                "filter": f"(TRADE_DATE>='{trade_date_text}')(TRADE_DATE<='{trade_date_text}')(CHANGE_RATE>{STRONG_MIN_PCT})",
+            },
+            timeout=20,
+            retries=3,
+        )
+        result = payload.get("result") or {}
+        data = result.get("data") or []
+        for row in data:
+            code = str(row.get("SECURITY_CODE") or "").strip()
+            name = str(row.get("SECURITY_NAME_ABBR") or "").strip()
+            pct = to_float(row.get("CHANGE_RATE"))
+            if not code or not name or pct is None:
+                continue
+            rows.append({"code": normalize_code(code), "name": name, "todayPct": pct})
+        pages = int(result.get("pages") or 0)
+        if pages > 0 and page >= pages:
+            break
+        if not data:
+            break
+        page += 1
+    return rows
+
+
+def fetch_limit_up_candidates(trade_date: date) -> list[dict]:
+    payload = fetch_json(
+        LIMIT_UP_POOL_API,
+        {
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+            "dpt": "wz.ztzt",
+            "Pageindex": "0",
+            "pagesize": "500",
+            "sort": "amount:desc",
+            "date": trade_date.strftime("%Y%m%d"),
+        },
+        timeout=20,
+        retries=3,
+    )
+    pool = ((payload.get("data") or {}).get("pool") or [])
+    rows: list[dict] = []
+    for item in pool:
+        code = normalize_code(str(item.get("c") or "").strip())
+        name = str(item.get("n") or "").strip()
+        pct = to_float(item.get("zdp"))
+        latest_close_raw = to_float(item.get("p"))
+        latest_close = (latest_close_raw / 1000.0) if latest_close_raw is not None else None
+        if not code or not name or pct is None:
+            continue
+        rows.append(
+            {
+                "code": code,
+                "name": name,
+                "industry": str(item.get("hybk") or "").strip(),
+                "todayPct": pct,
+                "todayAmount": to_float(item.get("amount")) or 0.0,
+                "turnoverRate": to_float(item.get("hs")),
+                "floatMarketCap": to_float(item.get("ltsz")) or 0.0,
+                "totalMarketCap": to_float(item.get("tshare")) or 0.0,
+                "latestClose": latest_close,
+            }
+        )
+    return rows
+
+
+def resolve_strong_stock_candidates(trade_date: date, lookback_days: int = 5) -> tuple[date, list[dict]]:
+    for offset in range(lookback_days + 1):
+        candidate_date = trade_date - timedelta(days=offset)
+        rows = fetch_strong_stock_candidates(candidate_date)
+        if rows:
+            return candidate_date, rows
+    return trade_date, []
+
+
+def parse_strong_stock_report(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            continue
+        parts = [part.strip() for part in line.strip().strip("|").split("|")]
+        if len(parts) < 5 or parts[0] in {"股票代码", "---"}:
+            continue
+        code = normalize_code(parts[0])
+        name = parts[1]
+        pct_text = parts[2].replace("%", "").strip()
+        pct = to_float(pct_text)
+        amount_match = re.search(r"([0-9]+(?:\.[0-9]+)?)亿", parts[4])
+        amount = float(amount_match.group(1)) * 1e8 if amount_match else None
+        if not code or not name or pct is None:
+            continue
+        rows.append({"code": code, "name": name, "todayPct": pct, "todayAmount": amount})
+    return rows
+
+
+def fetch_quote_snapshot(code: str) -> dict:
+    data: dict[str, object] = {}
+    try:
+        session = build_session()
+        resp = session.get(
+            QUOTE_API,
+            params={
+                "invt": "2",
+                "fltt": "2",
+                "fields": "f57,f58,f2,f3,f5,f6,f116,f117,f168",
+                "secid": code_to_secid(code),
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = (resp.json().get("data") or {})
+    except Exception:
+        data = {}
+    snapshot = {
+        "latestClose": to_float(data.get("f2")),
+        "todayPct": to_float(data.get("f3")),
+        "todayVolume": (to_float(data.get("f5")) or 0.0) * 100.0,
+        "totalMarketCap": to_float(data.get("f116")) or 0.0,
+        "floatMarketCap": to_float(data.get("f117")) or 0.0,
+        "turnoverRate": to_float(data.get("f168")),
+        "todayAmount": to_float(data.get("f6")) or 0.0,
+    }
+    if snapshot["latestClose"] not in (None, 0):
+        return snapshot
+
+    try:
+        raw = code.split(".")[0]
+        symbol = ("sh" if raw.startswith(("5", "6", "9")) else "sz") + raw
+        session = build_session()
+        resp = session.get("https://qt.gtimg.cn/q=" + symbol, timeout=15)
+        resp.raise_for_status()
+        text = resp.text
+        if "=" not in text:
+            return snapshot
+        payload = text.split("=", 1)[1].strip().strip(";").strip().strip('"')
+        parts = payload.split("~")
+        if len(parts) >= 46:
+            snapshot["latestClose"] = to_float(parts[3])
+            snapshot["todayPct"] = to_float(parts[32])
+            snapshot["todayVolume"] = to_float(parts[36]) or 0.0
+            snapshot["todayAmount"] = (to_float(parts[37]) or 0.0) * 10000.0
+            snapshot["turnoverRate"] = to_float(parts[38])
+            snapshot["totalMarketCap"] = (to_float(parts[44]) or 0.0) * 1e8
+            snapshot["floatMarketCap"] = (to_float(parts[45]) or 0.0) * 1e8
+    except Exception:
+        pass
+    return snapshot
+
+
+def fetch_strong_stocks(trade_date: date) -> list[dict]:
+    resolved_trade_date = trade_date
+    if trade_date == AS_OF:
+        candidates = parse_strong_stock_report(POST_CLOSE_REPORT)
+        if not candidates:
+            resolved_trade_date, candidates = resolve_strong_stock_candidates(trade_date)
+    else:
+        resolved_trade_date, candidates = resolve_strong_stock_candidates(trade_date)
+    strong_rows: list[dict] = []
+    for row in candidates:
+        snap = fetch_quote_snapshot(row["code"])
+        total_cap = snap["totalMarketCap"]
+        if total_cap < STRONG_MIN_TOTAL_CAP or total_cap > STRONG_MAX_TOTAL_CAP:
+            continue
+        if (snap["todayAmount"] or row.get("todayAmount") or 0.0) < STRONG_MIN_AMOUNT:
+            continue
+        if snap["turnoverRate"] is None or snap["turnoverRate"] <= STRONG_MIN_TURNOVER or snap["turnoverRate"] > STRONG_MAX_TURNOVER:
+            continue
+        code = row["code"]
+        strong_rows.append(
+            {
+                "code": code,
+                "name": row["name"],
+                "mainBusiness": MAIN_BUSINESS_MAP.get(code, fetch_industry(code) or "-"),
+                "latestClose": snap["latestClose"],
+                "totalMarketCap": total_cap,
+                "floatMarketCap": snap["floatMarketCap"],
+                "todayAmount": snap["todayAmount"] or row.get("todayAmount") or 0.0,
+                "turnoverRate": snap["turnoverRate"],
+                "todayPct": row["todayPct"],
+            }
+        )
+    if strong_rows:
+        news_map = fetch_latest_news_map([(row["name"], row["code"]) for row in strong_rows])
+        for row in strong_rows:
+            row["latestNews"] = news_map.get(row["code"]) or row.get("latestNews") or {
+                "time": "",
+                "summary": "",
+                "title": "",
+                "link": "",
+                "isRecent": False,
+            }
+            if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
+                hint = infer_main_business_from_text(
+                    " ".join(
+                        [
+                            row["latestNews"].get("title", ""),
+                            row["latestNews"].get("summary", ""),
+                        ]
+                    )
+                )
+                if hint:
+                    row["mainBusiness"] = hint
+    strong_rows = finalize_strong_stocks(strong_rows, {code for _, code in WATCHLIST_BASE})
+    return strong_rows
+
+
+def fetch_strong_stocks_via_ifind(access_token: str, trade_date: date) -> list[dict]:
+    _, candidates = resolve_strong_stock_candidates(trade_date)
+    if not candidates:
+        return []
+    codes = [row["code"] for row in candidates]
+    code_to_name = {row["code"]: row["name"] for row in candidates}
+    code_to_pct = {row["code"]: row["todayPct"] for row in candidates}
+    history_map = fetch_history(access_token, codes)
+
+    basic_map = fetch_basic(access_token, codes)
+
+    strong_rows: list[dict] = []
+    for code in codes:
+        history = history_map.get(code)
+        table = (history or {}).get("table") or {}
+        times = ((history or {}).get("time") or [])[-30:]
+        open_list = (table.get("open") or [])[-30:]
+        high_list = (table.get("high") or [])[-30:]
+        low_list = (table.get("low") or [])[-30:]
+        close_list = (table.get("close") or [])[-30:]
+        volume_list = (table.get("volume") or [])[-30:]
+        amount_list = (table.get("amount") or [])[-30:]
+
+        basic = basic_map.get(code, {})
+        close_field = basic.get("ths_close_price_stock") or []
+        total_field = basic.get("ths_total_shares_stock") or []
+        float_field = basic.get("ths_free_float_shares_stock") or []
+        latest_close = float(
+            (close_field[0] if close_field else None)
+            or (close_list[-1] if close_list else None)
+            or 0.0
+        )
+        total_shares = float((total_field[0] if total_field else 0) or 0)
+        free_float_shares = float((float_field[0] if float_field else 0) or 0)
+        total_cap = total_shares * latest_close if total_shares else 0.0
+        float_cap = free_float_shares * latest_close if free_float_shares else 0.0
+        if total_cap <= 0 and float_cap > 0:
+            total_cap = float_cap
+        today_amount = amount_list[-1] if amount_list else 0.0
+        turnover_rate = (
+            (volume_list[-1] / free_float_shares * 100.0) if volume_list and free_float_shares else None
+        )
+
+        if total_cap < STRONG_MIN_TOTAL_CAP or total_cap > STRONG_MAX_TOTAL_CAP:
+            continue
+        if today_amount < STRONG_MIN_AMOUNT:
+            continue
+        if turnover_rate is None or turnover_rate <= STRONG_MIN_TURNOVER or turnover_rate > STRONG_MAX_TURNOVER:
+            continue
+
+        last5 = []
+        if times and close_list and len(times) == len(close_list):
+            prev = None
+            for i in range(max(0, len(times) - 5), len(times)):
+                current_close = close_list[i]
+                pct = None
+                if current_close not in (None, "") and prev not in (None, ""):
+                    pct = (current_close / prev - 1.0) * 100.0
+                last5.append(
+                    {
+                        "date": times[i],
+                        "close": current_close,
+                        "volume": volume_list[i],
+                        "amount": amount_list[i],
+                        "pct": pct,
+                    }
+                )
+                prev = current_close if current_close not in (None, "") else prev
+
+        strong_rows.append(
+            {
+                "code": code,
+                "name": code_to_name.get(code, code),
+                "mainBusiness": MAIN_BUSINESS_MAP.get(code) or "-",
+                "latestClose": latest_close,
+                "totalMarketCap": total_cap,
+                "floatMarketCap": float_cap,
+                "todayAmount": today_amount,
+                "turnoverRate": turnover_rate,
+                "todayPct": code_to_pct.get(code),
+                "latestNews": {"time": "", "summary": "", "title": "", "link": "", "isRecent": False},
+                "research": empty_research_payload(),
+                "peRatio": None,
+                "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
+                "topHolders": {"reportDate": "", "totalRatio": None, "holders": []},
+                "businessSegments": {"reportDate": "", "category": "", "items": []},
+                "topCustomers": {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []},
+                "kline": [
+                    [times[i], open_list[i], close_list[i], low_list[i], high_list[i], volume_list[i], amount_list[i]]
+                    for i in range(len(times))
+                    if close_list[i] not in (None, "")
+                ] if times and len(times) == len(close_list) else [],
+                "last5": last5,
+            }
+        )
+
+    if strong_rows:
+        news_map = fetch_latest_news_map([(row["name"], row["code"]) for row in strong_rows])
+        for row in strong_rows:
+            row["latestNews"] = news_map.get(row["code"]) or {
+                "time": "",
+                "summary": "",
+                "title": "",
+                "link": "",
+                "isRecent": False,
+            }
+
+    for row in strong_rows:
+        if not matches_mainline_business(row.get("mainBusiness")):
+            hint = infer_main_business_from_text(
+                " ".join(
+                    [
+                        row["latestNews"].get("title", ""),
+                        row["latestNews"].get("summary", ""),
+                    ]
+                )
+            )
+            if hint:
+                row["mainBusiness"] = hint
+
+    strong_rows = finalize_strong_stocks(strong_rows, {code for _, code in WATCHLIST_BASE})
+    return strong_rows
+
+
+def fetch_top5_customers(name: str, code: str) -> dict[str, object]:
+    headers = {
+        "User-Agent": NEWS_UA,
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://www.cninfo.com.cn/new/fulltextSearch",
+    }
+    annual_years = [AS_OF.year - 1, AS_OF.year - 2, AS_OF.year - 3]
+    annual_report = None
+    report_year = None
+
+    for year in annual_years:
+        params = {
+            "searchkey": f"{name} {year} 年度报告",
+            "pageNum": 1,
+            "pageSize": 10,
+            "sortName": "nothing",
+            "sortType": "desc",
+            "isfulltext": "true",
+            "type": "",
+        }
+        try:
+            resp = requests.get(
+                "https://www.cninfo.com.cn/new/fulltextSearch/full",
+                params=params,
+                headers=headers,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            announcements = (resp.json() or {}).get("announcements") or []
+        except Exception:
+            continue
+
+        for ann in announcements:
+            raw_title = f"{ann.get('shortTitle') or ''} {ann.get('announcementTitle') or ''}"
+            title = re.sub(r"<[^>]+>", "", raw_title)
+            if (
+                "年度报告" in title
+                and "半年度" not in title
+                and "摘要" not in title
+                and "英文" not in title
+                and "已取消" not in title
+            ):
+                annual_report = ann
+                year_match = re.search(r"(20\d{2})年年度报告", title)
+                report_year = int(year_match.group(1)) if year_match else year
+                break
+        if annual_report:
+            break
+
+    if not annual_report:
+        return {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
+
+    adjunct_url = annual_report.get("adjunctUrl") or ""
+    if not adjunct_url:
+        return {"reportDate": str(report_year or ""), "totalAmount": None, "totalRatio": None, "customers": []}
+
+    try:
+        pdf_resp = requests.get(
+            f"https://static.cninfo.com.cn/{adjunct_url}",
+            headers={"User-Agent": NEWS_UA, "Referer": "https://www.cninfo.com.cn/"},
+            timeout=40,
+        )
+        pdf_resp.raise_for_status()
+        reader = PdfReader(io.BytesIO(pdf_resp.content))
+    except Exception:
+        return {"reportDate": str(report_year or ""), "totalAmount": None, "totalRatio": None, "customers": []}
+
+    section_text = ""
+    for page in reader.pages:
+        text = (page.extract_text() or "").replace("\u3000", " ")
+        if "前五名客户合计销售金额" not in text and "公司前 5 大客户资料" not in text and "公司前5大客户资料" not in text:
+            continue
+        section_text = text
+        break
+
+    if not section_text:
+        return {"reportDate": str(report_year or ""), "totalAmount": None, "totalRatio": None, "customers": []}
+
+    total_amount = None
+    total_ratio = None
+    amount_match = re.search(r"前五名客户合计销售金额（元）\s*([\d,]+(?:\.\d+)?)", section_text)
+    if amount_match:
+        total_amount = float(amount_match.group(1).replace(",", ""))
+    ratio_match = re.search(r"前五名客户合计销售金额占年度销售总额比例\s*([\d.]+)%", section_text)
+    if ratio_match:
+        total_ratio = float(ratio_match.group(1))
+
+    customers: list[dict[str, object]] = []
+    in_customer_table = False
+    for raw_line in section_text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        if "公司前 5 大客户资料" in line or "公司前5大客户资料" in line:
+            in_customer_table = True
+            continue
+        if not in_customer_table:
+            continue
+        if line.startswith("合计") or "主要客户其他情况说明" in line or "公司主要供应商情况" in line:
+            break
+        row_match = re.match(r"^([1-5])\s+(.+?)\s+([\d,]+(?:\.\d+)?)\s+([\d.]+%)$", line)
+        if not row_match:
+            continue
+        customers.append(
+            {
+                "rank": int(row_match.group(1)),
+                "name": row_match.group(2),
+                "amount": float(row_match.group(3).replace(",", "")),
+                "ratio": float(row_match.group(4).rstrip("%")),
+            }
+        )
+
+    return {
+        "reportDate": str(report_year or ""),
+        "totalAmount": total_amount,
+        "totalRatio": total_ratio,
+        "customers": customers,
+    }
+
+
+def format_pct(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:+.2f}%"
+
+
+def format_revenue_yi(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value / 1e8:.2f}亿元"
+
+
+def fetch_financial_snapshots(access_token: str, codes: list[str]) -> dict[str, dict[str, str]]:
+    report_labels = {
+        "20251231": "2025年报",
+        "20250930": "2025三季报",
+        "20250630": "2025中报",
+        "20250331": "2025一季报",
+    }
+    snapshots: dict[str, dict[str, float | str | None]] = {code: {} for code in codes}
+    q1_snapshots: dict[str, dict[str, float | None]] = {code: {} for code in codes}
+
+    for report in ["20251231", "20250930", "20250630", "20250331"]:
+        payload = {
+            "codes": ",".join(codes),
+            "indipara": [
+                {"indicator": "ths_revenue_stock", "indiparams": [report, "1", "1"]},
+                {"indicator": "ths_operating_revenue_yoy_stock", "indiparams": [report, "1", "1"]},
+            ],
+        }
+        session = build_session()
+        resp = session.post(
+            f"{BASE_URL}/basic_data_service",
+            json=payload,
+            headers={"Content-Type": "application/json", "access_token": access_token},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        for row in resp.json()["tables"]:
+            code = row["thscode"]
+            table = row["table"]
+            revenue = (table.get("ths_revenue_stock") or [None])[0]
+            yoy = (table.get("ths_operating_revenue_yoy_stock") or [None])[0]
+            if revenue is None and yoy is None:
+                continue
+            current = snapshots.setdefault(code, {})
+            # Prefer the first available report in the sequence above, i.e. annual first then latest disclosed quarter.
+            if current.get("report_date"):
+                continue
+            current["report_date"] = report
+            current["report_label"] = report_labels[report]
+            current["revenue"] = revenue
+            current["yoy"] = yoy
+
+    q1_payload = {
+        "codes": ",".join(codes),
+        "indipara": [
+            {"indicator": "ths_revenue_stock", "indiparams": ["20260331", "1", "1"]},
+            {"indicator": "ths_operating_revenue_yoy_stock", "indiparams": ["20260331", "1", "1"]},
+            {"indicator": "ths_np_stock", "indiparams": ["20260331", "1", "1"]},
+            {"indicator": "ths_np_yoy_stock", "indiparams": ["20260331", "1", "1"]},
+        ],
+    }
+    session = build_session()
+    resp = session.post(
+        f"{BASE_URL}/basic_data_service",
+        json=q1_payload,
+        headers={"Content-Type": "application/json", "access_token": access_token},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    for row in resp.json()["tables"]:
+        code = row["thscode"]
+        table = row["table"]
+        q1_snapshots[code] = {
+            "q1Revenue2026": (table.get("ths_revenue_stock") or [None])[0],
+            "q1RevenueYoY2026": (table.get("ths_operating_revenue_yoy_stock") or [None])[0],
+            "q1NetProfit2026": (table.get("ths_np_stock") or [None])[0],
+            "q1NetProfitYoY2026": (table.get("ths_np_yoy_stock") or [None])[0],
+        }
+
+    out: dict[str, dict[str, str]] = {}
+    for code, snap in snapshots.items():
+        report_label = snap.get("report_label")
+        revenue = snap.get("revenue")
+        yoy = snap.get("yoy")
+        q1 = q1_snapshots.get(code, {})
+        if not report_label:
+            out[code] = {
+                "q1Revenue2026": format_revenue_yi(q1.get("q1Revenue2026")),
+                "q1RevenueYoY2026": format_pct(q1.get("q1RevenueYoY2026")),
+                "q1NetProfit2026": format_revenue_yi(q1.get("q1NetProfit2026")),
+                "q1NetProfitYoY2026": format_pct(q1.get("q1NetProfitYoY2026")),
+            }
+            continue
+        if report_label == "2025年报":
+            out[code] = {
+                "revenue2025": f"iFinD口径：2025年营收{format_revenue_yi(revenue)}",
+                "revenueYoY": format_pct(yoy),
+                "q1Revenue2026": format_revenue_yi(q1.get("q1Revenue2026")),
+                "q1RevenueYoY2026": format_pct(q1.get("q1RevenueYoY2026")),
+                "q1NetProfit2026": format_revenue_yi(q1.get("q1NetProfit2026")),
+                "q1NetProfitYoY2026": format_pct(q1.get("q1NetProfitYoY2026")),
+            }
+        else:
+            yoy_text = format_pct(yoy) or "暂无同比"
+            out[code] = {
+                "revenue2025": f"iFinD截至{AS_OF.isoformat()}未检索到2025年报，最近一期已披露为{report_label}营收{format_revenue_yi(revenue)}",
+                "revenueYoY": f"{report_label}同比{yoy_text}",
+                "q1Revenue2026": format_revenue_yi(q1.get("q1Revenue2026")),
+                "q1RevenueYoY2026": format_pct(q1.get("q1RevenueYoY2026")),
+                "q1NetProfit2026": format_revenue_yi(q1.get("q1NetProfit2026")),
+                "q1NetProfitYoY2026": format_pct(q1.get("q1NetProfitYoY2026")),
+            }
+    return out
+
+
+def build_research_payload(code: str, research_row: dict[str, str]) -> dict[str, str]:
+    fallback = RESEARCH_FALLBACK_MAP.get(code, {})
+    q1_row = load_q1_financial_rows().get(code, {})
+    return {
+        "revenue2025": research_row.get("2025营收") or research_row.get("revenue2025") or fallback.get("2025营收", ""),
+        "revenueYoY": research_row.get("同比") or research_row.get("revenueYoY") or fallback.get("同比", ""),
+        "q1Revenue2026": research_row.get("q1Revenue2026") or q1_row.get("q1Revenue2026", ""),
+        "q1RevenueYoY2026": research_row.get("q1RevenueYoY2026") or q1_row.get("q1RevenueYoY2026", ""),
+        "q1NetProfit2026": research_row.get("q1NetProfit2026") or q1_row.get("q1NetProfit2026", ""),
+        "q1NetProfitYoY2026": research_row.get("q1NetProfitYoY2026") or q1_row.get("q1NetProfitYoY2026", ""),
+        "newOrders2026": research_row.get("2026新订单/新增项目") or research_row.get("newOrders2026") or fallback.get("2026新订单/新增项目", ""),
+        "coreLogic": research_row.get("核心逻辑分析") or research_row.get("coreLogic") or fallback.get("核心逻辑分析", ""),
+        "coreUsers": research_row.get("核心用户及订单") or research_row.get("coreUsers") or fallback.get("核心用户及订单", ""),
+        "coreEdge": research_row.get("核心竞争力") or research_row.get("coreEdge") or fallback.get("核心竞争力", ""),
+        "notes": research_row.get("备注") or research_row.get("notes") or fallback.get("备注", ""),
+    }
+
+
+def empty_research_payload() -> dict[str, str]:
+    return {
+        "revenue2025": "",
+        "revenueYoY": "",
+        "q1Revenue2026": "",
+        "q1RevenueYoY2026": "",
+        "q1NetProfit2026": "",
+        "q1NetProfitYoY2026": "",
+        "newOrders2026": "",
+        "coreLogic": "",
+        "coreUsers": "",
+        "coreEdge": "",
+        "notes": "",
+    }
+
+
+def build_dataset() -> list[dict]:
+    research_map = load_research_rows()
+    watchlist = build_watchlist(research_map)
+    access_token = get_access_token()
+    history_map = fetch_history(access_token)
+    basic_map = fetch_basic(access_token)
+    financial_map = fetch_financial_snapshots(access_token, [code for _, code in watchlist])
+    order_book_map = fetch_order_book_snapshots(access_token, [code for _, code in watchlist])
+    pe_ratio_map = fetch_pe_ratios(access_token, [code for _, code in watchlist])
+    margin_financing_map = fetch_margin_financing_map([code for _, code in watchlist])
+
+    dataset: list[dict] = []
+    for name, code in watchlist:
+        history = history_map[code]
+        table = history["table"]
+        times = history["time"][-30:]
+        open_list = table["open"][-30:]
+        high_list = table["high"][-30:]
+        low_list = table["low"][-30:]
+        close_list = table["close"][-30:]
+        volume_list = table["volume"][-30:]
+        amount_list = table["amount"][-30:]
+
+        basic = basic_map.get(code, {})
+        research = research_map.get(code, {})
+        free_float_shares = float((basic.get("ths_free_float_shares_stock") or [0])[0] or 0)
+        latest_close = float((basic.get("ths_close_price_stock") or [close_list[-1]])[0] or close_list[-1])
+        float_mcap = free_float_shares * latest_close
+        turnover_rate = (volume_list[-1] / free_float_shares * 100.0) if free_float_shares else None
+        total_mcap = fetch_total_market_cap(code)
+        pe_ratio = pe_ratio_map.get(code)
+        today_pct = None
+        if len(close_list) >= 2 and close_list[-2]:
+            today_pct = (close_list[-1] / close_list[-2] - 1.0) * 100.0
+        industry = fetch_industry(code)
+        main_business = MAIN_BUSINESS_MAP.get(code, industry)
+
+        last_5 = []
+        prev = None
+        for i in range(max(0, len(times) - 5), len(times)):
+            pct = None if prev is None else (close_list[i] / prev - 1.0) * 100.0
+            last_5.append(
+                {
+                    "date": times[i],
+                    "close": close_list[i],
+                    "volume": volume_list[i],
+                    "amount": amount_list[i],
+                    "pct": pct,
+                }
+            )
+            prev = close_list[i]
+
+        research_payload = build_research_payload(code, research)
+        financial = financial_map.get(code, {})
+        if financial.get("revenue2025"):
+            research_payload["revenue2025"] = financial["revenue2025"]
+        if financial.get("revenueYoY"):
+            research_payload["revenueYoY"] = financial["revenueYoY"]
+        if financial.get("q1Revenue2026"):
+            research_payload["q1Revenue2026"] = financial["q1Revenue2026"]
+        if financial.get("q1RevenueYoY2026"):
+            research_payload["q1RevenueYoY2026"] = financial["q1RevenueYoY2026"]
+        if financial.get("q1NetProfit2026"):
+            research_payload["q1NetProfit2026"] = financial["q1NetProfit2026"]
+        if financial.get("q1NetProfitYoY2026"):
+            research_payload["q1NetProfitYoY2026"] = financial["q1NetProfitYoY2026"]
+        top_holders = fetch_top5_shareholders(code)
+        business_segments = fetch_top3_business_segments(code)
+        top_customers = fetch_top5_customers(name, code)
+
+        dataset.append(
+            {
+                "name": name,
+                "code": code,
+                "totalMarketCap": total_mcap,
+                "floatMarketCap": float_mcap,
+                "todayVolume": volume_list[-1],
+                "todayAmount": amount_list[-1],
+                "turnoverRate": turnover_rate,
+                "peRatio": pe_ratio,
+                "marginFinancing": margin_financing_map.get(
+                    code, {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None}
+                ),
+                "latestClose": latest_close,
+                "todayPct": today_pct,
+                "industry": industry,
+                "mainBusiness": main_business,
+                "research": research_payload,
+                "topHolders": top_holders,
+                "businessSegments": business_segments,
+                "topCustomers": top_customers,
+                "last5": last_5,
+                "orderBook": order_book_map.get(code, {}),
+                "kline": [
+                    [times[i], open_list[i], close_list[i], low_list[i], high_list[i], volume_list[i], amount_list[i]]
+                    for i in range(len(times))
+                ],
+            }
+        )
+    return dataset
+
+
+def enrich_strong_stocks_for_modal(access_token: str, strong_rows: list[dict]) -> list[dict]:
+    if not strong_rows:
+        return []
+    codes = [item["code"] for item in strong_rows]
+    try:
+        history_map = fetch_history(access_token, codes)
+    except Exception:
+        history_map = {}
+
+    enriched: list[dict] = []
+    for item in strong_rows:
+        history = history_map.get(item["code"])
+        kline = []
+        if history:
+            table = history.get("table") or {}
+            times = (history.get("time") or [])[-30:]
+            open_list = (table.get("open") or [])[-30:]
+            high_list = (table.get("high") or [])[-30:]
+            low_list = (table.get("low") or [])[-30:]
+            close_list = (table.get("close") or [])[-30:]
+            volume_list = (table.get("volume") or [])[-30:]
+            amount_list = (table.get("amount") or [])[-30:]
+            count = min(len(times), len(open_list), len(high_list), len(low_list), len(close_list), len(volume_list), len(amount_list))
+            kline = [
+                [times[i], open_list[i], close_list[i], low_list[i], high_list[i], volume_list[i], amount_list[i]]
+                for i in range(count)
+            ]
+        enriched.append(
+            {
+                **item,
+                "research": empty_research_payload(),
+                "peRatio": item.get("peRatio"),
+                "marginFinancing": item.get("marginFinancing") or {
+                    "date": "",
+                    "finBalance": None,
+                    "loanBalance": None,
+                    "finBuyAmount": None,
+                },
+                "topHolders": item.get("topHolders") or {"reportDate": "", "totalRatio": None, "holders": []},
+                "businessSegments": item.get("businessSegments") or {"reportDate": "", "category": "", "items": []},
+                "topCustomers": item.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []},
+                "kline": kline,
+                "last5": item.get("last5") or [],
+            }
+        )
+    return enriched
+
+
+def fetch_market_overview(access_token: str | None) -> dict[str, object]:
+    overview = {
+        "tradeDate": AS_OF.isoformat(),
+        "indices": [],
+        "totalAmount": None,
+        "totalVolume": None,
+        "shAmount": None,
+        "szAmount": None,
+        "cybAmount": None,
+        "kc50Amount": None,
+        "indexRiseCount": None,
+        "indexFallCount": None,
+    }
+    if access_token:
+        try:
+            cards = fetch_market_index_cards(access_token)
+            overview["indices"] = cards
+            by_name = {item["name"]: item for item in cards}
+            sh_amount = to_float((by_name.get("上证指数") or {}).get("amount"))
+            sz_amount = to_float((by_name.get("深证成指") or {}).get("amount"))
+            sh_volume = to_float((by_name.get("上证指数") or {}).get("volume"))
+            sz_volume = to_float((by_name.get("深证成指") or {}).get("volume"))
+            overview["shAmount"] = sh_amount
+            overview["szAmount"] = sz_amount
+            overview["cybAmount"] = to_float((by_name.get("创业板指") or {}).get("amount"))
+            overview["kc50Amount"] = to_float((by_name.get("科创50") or {}).get("amount"))
+            if sh_amount is not None and sz_amount is not None:
+                overview["totalAmount"] = sh_amount + sz_amount
+            if sh_volume is not None and sz_volume is not None:
+                overview["totalVolume"] = sh_volume + sz_volume
+            pct_values = [to_float(item.get("pct")) for item in cards]
+            overview["indexRiseCount"] = sum(1 for v in pct_values if v is not None and v > 0)
+            overview["indexFallCount"] = sum(1 for v in pct_values if v is not None and v < 0)
+        except Exception:
+            overview["indices"] = []
+    return overview
+
+
+def fetch_market_index_cards(access_token: str) -> list[dict[str, object]]:
+    history_map = fetch_history(access_token, [code for _, code in MARKET_INDEXES])
+    cards: list[dict[str, object]] = []
+    for name, code in MARKET_INDEXES:
+        history = history_map.get(code) or {}
+        table = history.get("table") or {}
+        times = history.get("time") or []
+        closes = table.get("close") or []
+        amounts = table.get("amount") or []
+        volumes = table.get("volume") or []
+        if not times or not closes:
+            continue
+        latest_close = to_float(closes[-1])
+        prev_close = to_float(closes[-2]) if len(closes) >= 2 else None
+        pct = None
+        if latest_close not in (None, 0) and prev_close not in (None, 0):
+            pct = (latest_close / prev_close - 1.0) * 100.0
+        cards.append(
+            {
+                "name": name,
+                "code": code,
+                "date": times[-1],
+                "latestClose": latest_close,
+                "pct": pct,
+                "amount": to_float(amounts[-1]) if amounts else None,
+                "volume": to_float(volumes[-1]) if volumes else None,
+                "detail": INDEX_DETAIL_MAP.get(code),
+            }
+        )
+    return cards
+
+
+def extract_js_var_text(source: str, var_name: str) -> str | None:
+    match = re.search(rf"var\s+{re.escape(var_name)}\s*=\s*(.*?);", source, re.S)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def fetch_stock_name_map(symbols: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not symbols:
+        return out
+    qq_symbols = []
+    symbol_backmap: dict[str, str] = {}
+    for symbol in symbols:
+        market, raw = symbol.split(".")
+        qq_symbol = ("sh" if market == "1" else "sz") + raw
+        qq_symbols.append(qq_symbol)
+        symbol_backmap[qq_symbol] = symbol
+    session = build_session()
+    for batch in batched(qq_symbols, 40):
+        try:
+            resp = session.get(
+                "https://qt.gtimg.cn/q=" + ",".join(batch),
+                timeout=20,
+            )
+            resp.raise_for_status()
+            for line in resp.text.split(";"):
+                line = line.strip()
+                if not line.startswith("v_") or "=" not in line:
+                    continue
+                left, right = line.split("=", 1)
+                qq_symbol = left.removeprefix("v_")
+                payload = right.strip().strip('"')
+                parts = payload.split("~")
+                if len(parts) >= 2 and qq_symbol in symbol_backmap:
+                    out[symbol_backmap[qq_symbol]] = parts[1].strip() or symbol_backmap[qq_symbol]
+        except Exception:
+            continue
+    return out
+
+
+def probe_ifind_fund_quote_support(access_token: str | None) -> dict[str, object]:
+    result: dict[str, object] = {
+        "supportsFundQuotes": False,
+        "supportsFundHoldings": False,
+        "notes": "未检测",
+        "samples": [],
+    }
+    if not access_token:
+        result["notes"] = "未提供 iFinD access token，本页基金数据改走公开源。"
+        return result
+    session = build_session()
+    samples: list[dict[str, object]] = []
+    supported_codes: list[str] = []
+    for code in ["161725.OF", "159915.OF", "588000.OF"]:
+        try:
+            resp = session.post(
+                f"{BASE_URL}/cmd_history_quotation",
+                json={
+                    "codes": code,
+                    "indicators": "open,high,low,close,volume,amount",
+                    "startdate": (AS_OF - timedelta(days=20)).strftime("%Y-%m-%d"),
+                    "enddate": AS_OF.strftime("%Y-%m-%d"),
+                    "functionpara": {"Fill": "Blank"},
+                },
+                headers={"Content-Type": "application/json", "access_token": access_token},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            tables = resp.json().get("tables") or []
+            times = (tables[0].get("time") if tables else None) or []
+            if times:
+                supported_codes.append(code)
+                samples.append({"code": code, "lastDate": times[-1]})
+        except Exception:
+            continue
+    if supported_codes:
+        result["supportsFundQuotes"] = True
+        result["notes"] = (
+            "iFinD QuantAPI 已验证支持 .OF 基金行情历史；"
+            "但当前未找到可直接返回前十大重仓股的现成 QuantAPI 持仓接口，"
+            "机构持仓页改用天天基金公开披露数据。"
+        )
+        result["samples"] = samples
+    else:
+        result["notes"] = "iFinD 当前仅确认股票链路；基金持仓页改走天天基金公开源。"
+    return result
+
+
+def fetch_institution_holdings(access_token: str | None = None) -> dict[str, object]:
+    session = build_session()
+    fund_snapshots: list[dict[str, object]] = []
+    stock_symbol_set: set[str] = set()
+    for code in INSTITUTION_FUND_CODES:
+        try:
+            resp = session.get(
+                f"https://fund.eastmoney.com/pingzhongdata/{code}.js?v={int(time.time())}",
+                headers={"User-Agent": NEWS_UA, "Referer": f"https://fund.eastmoney.com/{code}.html"},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            text = resp.text
+            name_match = re.search(r'var\s+fS_name\s*=\s*"([^"]+)"', text)
+            name = name_match.group(1).strip() if name_match else code
+            stock_codes_raw = extract_js_var_text(text, "stockCodesNew") or "[]"
+            stock_codes = json.loads(stock_codes_raw)
+            scale_raw = extract_js_var_text(text, "Data_fluctuationScale") or "{}"
+            scale_data = json.loads(scale_raw)
+            categories = scale_data.get("categories") or []
+            series = scale_data.get("series") or []
+            latest_scale = series[-1].get("y") if series else None
+            latest_mom = series[-1].get("mom") if series else None
+            latest_scale_date = categories[-1] if categories else ""
+            stock_symbol_set.update(stock_codes)
+            fund_snapshots.append(
+                {
+                    "fundCode": code,
+                    "fundName": name,
+                    "fundScaleYi": latest_scale,
+                    "scaleChange": latest_mom,
+                    "scaleReportDate": latest_scale_date,
+                    "holdingSymbols": stock_codes[:10],
+                }
+            )
+        except Exception:
+            continue
+
+    name_map = fetch_stock_name_map(sorted(stock_symbol_set))
+    rows: list[dict[str, object]] = []
+    for item in fund_snapshots:
+        holdings = [
+            {
+                "name": name_map.get(symbol, symbol.split(".")[1]),
+                "code": symbol.split(".")[1] + (".SH" if symbol.startswith("1.") else ".SZ"),
+            }
+            for symbol in item.get("holdingSymbols", [])
+        ]
+        rows.append(
+            {
+                "fundCode": item["fundCode"],
+                "fundName": item["fundName"],
+                "fundScaleYi": item["fundScaleYi"],
+                "scaleChange": item["scaleChange"],
+                "scaleReportDate": item["scaleReportDate"],
+                "topHoldings": holdings,
+            }
+        )
+    rows.sort(key=lambda item: float(item.get("fundScaleYi") or 0.0), reverse=True)
+    return {
+        "tradeDate": AS_OF.isoformat(),
+        "source": "天天基金 pingzhongdata / 腾讯行情名称映射",
+        "ifindProbe": probe_ifind_fund_quote_support(access_token),
+        "rows": rows,
+    }
+
+
+def is_limit_up_candidate(code: str, pct: float | None) -> bool:
+    if pct is None:
+        return False
+    raw = code.split(".")[0]
+    if raw.startswith(("4", "8")):
+        return pct >= 29.0
+    if raw.startswith("68") or raw.startswith("30"):
+        return pct >= 19.0
+    return pct >= 9.7
+
+
+def build_html(
+    dataset: list[dict],
+    strong_stocks: list[dict],
+    market_overview: dict[str, object] | None = None,
+    institution_holdings: dict[str, object] | None = None,
+) -> str:
+    market_overview = market_overview or {}
+    institution_holdings = institution_holdings or {}
+    market_dates = sorted(
+        {
+            row[0]
+            for item in (dataset + strong_stocks)
+            for row in (item.get("kline") or [])
+            if row and row[0]
+        }
+    )
+    latest_market_date = market_dates[-1] if market_dates else ""
+    is_stale_market_data = bool(latest_market_date and latest_market_date != AS_OF.isoformat())
+    data_source_label = "iFinD QuantAPI" if not is_stale_market_data else "iFinD QuantAPI / 本地缓存"
+    stale_notice_html = ""
+    if is_stale_market_data:
+        stale_notice_html = (
+            '<div class="notice-banner">'
+            f'当前页面文件日期为 {AS_OF.isoformat()}，但行情主数据最新仅到 {latest_market_date}。'
+            "当前为缓存展示，不应视为当日实盘数据。"
+            "</div>"
+        )
+    overview_indices = market_overview.get("indices") or []
+    overview_trade_date = market_overview.get("tradeDate") or latest_market_date or AS_OF.isoformat()
+    index_cards_html = "".join(
+        f"""
+        <article class="market-card">
+          <button class="market-card-button" type="button" {'data-index-code="' + str(item.get('code')) + '"' if item.get('detail') else 'disabled'}>
+            <div class="market-card-head">
+              <strong>{item.get('name') or '-'}</strong>
+              <span>{str(item.get('date') or overview_trade_date)[5:]}</span>
+            </div>
+            <div class="market-card-price-row">
+              <div class="market-card-price">{'-' if item.get('latestClose') is None else f"{float(item['latestClose']):,.2f}"}</div>
+              <div class="market-card-pct {'pct-rise' if (item.get('pct') or 0) > 0 else 'pct-fall' if (item.get('pct') or 0) < 0 else 'pct-flat'}">{'-' if item.get('pct') is None else f"{float(item['pct']):+.2f}%"}</div>
+            </div>
+            <div class="market-card-meta">
+              <span>成交额 {'-' if item.get('amount') is None else fmt_yi_rmb(float(item['amount']))}</span>
+              <span>{'点开看权重股' if item.get('detail') else ''}</span>
+            </div>
+          </button>
+        </article>
+        """
+        for item in overview_indices
+    )
+    overview_metrics = [
+        ("A股成交额", "-" if market_overview.get("totalAmount") is None else fmt_yi_rmb(float(market_overview["totalAmount"]))),
+        ("A股成交量", "-" if market_overview.get("totalVolume") is None else f"{float(market_overview['totalVolume']) / 1e8:,.2f}亿手"),
+        ("沪市成交额", "-" if market_overview.get("shAmount") is None else fmt_yi_rmb(float(market_overview["shAmount"]))),
+        ("深市成交额", "-" if market_overview.get("szAmount") is None else fmt_yi_rmb(float(market_overview["szAmount"]))),
+        ("创业板成交额", "-" if market_overview.get("cybAmount") is None else fmt_yi_rmb(float(market_overview["cybAmount"]))),
+        ("科创50成交额", "-" if market_overview.get("kc50Amount") is None else fmt_yi_rmb(float(market_overview["kc50Amount"]))),
+        ("上涨指数数", "-" if market_overview.get("indexRiseCount") is None else str(int(market_overview["indexRiseCount"]))),
+        ("下跌指数数", "-" if market_overview.get("indexFallCount") is None else str(int(market_overview["indexFallCount"]))),
+    ]
+    overview_metrics_html = "".join(
+        f"""
+        <article class="market-stat">
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </article>
+        """
+        for label, value in overview_metrics
+    )
+    institution_rows_data = institution_holdings.get("rows") or []
+    institution_probe = institution_holdings.get("ifindProbe") or {}
+    institution_rows_html = []
+    for idx, item in enumerate(institution_rows_data, start=1):
+        holdings = item.get("topHoldings") or []
+        holdings_html = "".join(
+            f'<span class="holding-chip" data-code="{holding.get("code") or ""}">{holding.get("name") or "-"} <small>{holding.get("code") or ""}</small></span>'
+            for holding in holdings
+        )
+        institution_rows_html.append(
+            f"""
+            <tr data-institution-row="true">
+              <td class="index-cell">{idx}</td>
+              <td>
+                <div class="strong-name-cell">
+                  <span class="stock-name">{item.get('fundName') or '-'}</span>
+                  <span class="stock-code">{item.get('fundCode') or '-'}</span>
+                </div>
+              </td>
+              <td class="nowrap-cell">
+                {('-' if item.get('fundScaleYi') is None else f"{float(item['fundScaleYi']):,.2f}亿")}
+                <div class="news-time">披露期 {item.get('scaleReportDate') or '-'}</div>
+              </td>
+              <td>
+                <div class="holding-chip-list">{holdings_html or '<span class="holding-chip empty">暂无</span>'}</div>
+              </td>
+            </tr>
+            """
+        )
+    report_news_candidates = []
+    seen_report_codes: set[str] = set()
+    for item in strong_stocks + dataset:
+        code = item.get("code") or ""
+        news = item.get("latestNews") or {}
+        if not code or code in seen_report_codes:
+            continue
+        title = (news.get("title") or news.get("summary") or "").strip()
+        if not title:
+            continue
+        seen_report_codes.add(code)
+        report_news_candidates.append(
+            {
+                "name": item.get("name") or code,
+                "code": code,
+                "mainBusiness": item.get("mainBusiness") or "-",
+                "title": news.get("title") or news.get("summary") or "-",
+                "summary": news.get("summary") or "暂无摘要",
+                "time": news.get("time") or "",
+                "link": news.get("link") or "",
+            }
+        )
+        if len(report_news_candidates) >= 16:
+            break
+    report_cards_html = []
+    for item in report_news_candidates:
+        link_open = f'<a class="report-card" href="{item["link"]}" target="_blank" rel="noreferrer">' if item.get("link") else '<div class="report-card">'
+        link_close = "</a>" if item.get("link") else "</div>"
+        report_cards_html.append(
+            f"""
+            {link_open}
+              <div class="report-card-head">
+                <div>
+                  <strong>{item['name']}</strong>
+                  <span>{item['code']}</span>
+                </div>
+                <em>{item['time'] or '本地收录'}</em>
+              </div>
+              <div class="report-card-tag">{item['mainBusiness']}</div>
+              <h3>{item['title']}</h3>
+              <p>{item['summary']}</p>
+            {link_close}
+            """
+        )
+    modal_items = dataset + strong_stocks
+    table_rows = []
+    for item in dataset:
+        pct_class = "pct-rise" if (item["todayPct"] or 0) > 0 else "pct-fall" if (item["todayPct"] or 0) < 0 else "pct-flat"
+        news = item.get("latestNews") or {}
+        news_summary = news.get("summary") or "-"
+        news_time = news.get("time") or ""
+        news_link = news.get("link") or ""
+        news_html = (
+            f'<a class="news-link" href="{news_link}" target="_blank" rel="noreferrer"><span class="news-summary">{news_summary}</span><span class="news-time">{news_time}</span></a>'
+            if news_link
+            else f'<div class="news-summary">{news_summary}</div><div class="news-time">{news_time}</div>'
+        )
+        table_rows.append(
+            f"""
+            <tr data-watchlist-row="true" data-code="{item['code']}" data-total-market-cap="{item['totalMarketCap'] or 0}" data-float-market-cap="{item['floatMarketCap'] or 0}" data-today-amount="{item['todayAmount'] or 0}" data-turnover-rate="{'' if item.get('turnoverRate') is None else item['turnoverRate']}" data-today-pct="{'' if item['todayPct'] is None else item['todayPct']}">
+              <td class="index-cell" data-index-cell="watchlist"></td>
+              <td data-search="{item['name']} {item['code']}">
+                <button class="stock-trigger" type="button" data-code="{item['code']}">
+                  <span class="stock-name">{item['name']}</span>
+                  <span class="stock-code">{item['code']}</span>
+                </button>
+              </td>
+              <td>{item['mainBusiness'] or '-'}</td>
+              <td class="nowrap-cell">{fmt_yi(item['totalMarketCap'])} / {fmt_yi(item['floatMarketCap'])}</td>
+              <td class="nowrap-cell">{fmt_yi_rmb(item['todayAmount'])}</td>
+              <td class="nowrap-cell">{'-' if item.get('turnoverRate') is None else f"{item['turnoverRate']:.2f}%"}</td>
+              <td class="nowrap-cell">{item['latestClose']:.2f}</td>
+              <td class="{pct_class}">{'-' if item['todayPct'] is None else f"{item['todayPct']:+.2f}%"}</td>
+              <td class="news-cell">{news_html}</td>
+              <td>
+                <select class="status-select" data-code="{item['code']}" aria-label="{item['name']}状态">
+                  <option value="active">跟踪中</option>
+                  <option value="removed">移除</option>
+                </select>
+              </td>
+            </tr>
+            """
+        )
+
+    def build_momentum_rows(rows: list[dict], index_key: str) -> list[str]:
+        out = []
+        for item in rows:
+            pct_class = "pct-rise" if (item["todayPct"] or 0) > 0 else "pct-fall" if (item["todayPct"] or 0) < 0 else "pct-flat"
+            news = item.get("latestNews") or {}
+            news_summary = news.get("summary") or "-"
+            news_time = news.get("time") or ""
+            news_link = news.get("link") or ""
+            news_html = (
+                f'<a class="news-link" href="{news_link}" target="_blank" rel="noreferrer"><span class="news-summary">{news_summary}</span><span class="news-time">{news_time}</span></a>'
+                if news_link
+                else f'<div class="news-summary">{news_summary}</div><div class="news-time">{news_time}</div>'
+            )
+            join_select_html = (
+                f'''
+                    <select class="join-watchlist-select" data-code="{item['code']}" data-name="{item['name']}" data-watchlist-member="true" aria-label="{item['name']}跟踪状态">
+                      <option value="active" selected>跟踪中</option>
+                      <option value="removed">已移除</option>
+                    </select>
+                '''
+                if item["code"] in watchlist_codes
+                else f'''
+                    <select class="join-watchlist-select" data-code="{item['code']}" data-name="{item['name']}" aria-label="{item['name']}是否加入自选">
+                      <option value="pending" selected>不加入</option>
+                      <option value="joined">加入自选</option>
+                    </select>
+                '''
+            )
+            out.append(
+                f"""
+                <tr data-strong-stock-row="true" data-code="{item['code']}" data-name="{item['name']}" data-main-business="{item['mainBusiness'] or '-'}" data-total-market-cap="{item['totalMarketCap'] or 0}" data-float-market-cap="{item['floatMarketCap'] or 0}" data-today-amount="{item['todayAmount'] or 0}" data-turnover-rate="{'' if item['turnoverRate'] is None else item['turnoverRate']}" data-today-pct="{'' if item['todayPct'] is None else item['todayPct']}">
+                  <td class="index-cell" data-index-cell="{index_key}"></td>
+                  <td data-search="{item['name']} {item['code']}">
+                    <button class="stock-trigger strong-stock-trigger" type="button" data-code="{item['code']}">
+                      <span class="stock-name">{item['name']}</span>
+                      <span class="stock-code">{item['code']}</span>
+                    </button>
+                  </td>
+                  <td>{item['mainBusiness'] or '-'}</td>
+                  <td class="nowrap-cell">{fmt_yi(item['totalMarketCap'])} / {fmt_yi(item['floatMarketCap'])}</td>
+                  <td class="nowrap-cell">{fmt_yi_rmb(item['todayAmount'])}</td>
+                  <td class="nowrap-cell">{'-' if item['turnoverRate'] is None else f"{item['turnoverRate']:.2f}%"}</td>
+                  <td class="{pct_class}">{'-' if item['todayPct'] is None else f"{item['todayPct']:+.2f}%"}</td>
+                  <td class="news-cell">{news_html}</td>
+                  <td>{join_select_html}</td>
+                </tr>
+                """
+            )
+        return out
+
+    watchlist_codes = {item["code"] for item in dataset}
+    strong_rows = build_momentum_rows(strong_stocks, "strong")
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>股票跟踪看板</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    :root {{
+      --bg: #f4efe6;
+      --paper: #fffaf2;
+      --ink: #1f2a37;
+      --muted: #6b7280;
+      --line: rgba(31, 42, 55, 0.12);
+      --accent: #0f766e;
+      --accent-soft: rgba(15, 118, 110, 0.12);
+      --rise: #d64545;
+      --fall: #1f8f67;
+      --shadow: 0 24px 60px rgba(38, 28, 18, 0.08);
+    }}
+
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15,118,110,0.10), transparent 30%),
+        radial-gradient(circle at top right, rgba(214,69,69,0.10), transparent 22%),
+        linear-gradient(180deg, #f8f3ea 0%, var(--bg) 100%);
+    }}
+    .app-shell {{
+      width: min(1600px, calc(100vw - 20px));
+      margin: 0 auto;
+      padding: 20px 0 36px;
+      display: grid;
+      grid-template-columns: 188px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }}
+    .sidebar {{
+      position: sticky;
+      top: 18px;
+      min-height: calc(100vh - 36px);
+      align-self: stretch;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      padding: 22px 14px;
+      border-radius: 24px;
+      background: rgba(255,250,242,0.88);
+      border: 1px solid rgba(255,255,255,0.65);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }}
+    .sidebar-brand strong {{
+      display: block;
+      font-size: 18px;
+      letter-spacing: -0.04em;
+    }}
+    .sidebar-brand span {{
+      display: block;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .sidebar-nav {{
+      margin-top: 22px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }}
+    .sidebar-link {{
+      width: 100%;
+      text-align: left;
+      border: 1px solid rgba(31,42,55,0.08);
+      background: rgba(255,255,255,0.72);
+      color: #334155;
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }}
+    .sidebar-link.active {{
+      color: var(--accent);
+      border-color: rgba(15,118,110,0.18);
+      background: rgba(15,118,110,0.10);
+    }}
+    .wrap {{
+      width: 100%;
+      min-width: 0;
+      padding: 0 0 56px;
+    }}
+    .page-view[hidden] {{
+      display: none !important;
+    }}
+    .hero {{
+      padding: 20px 22px;
+      background: rgba(255,250,242,0.88);
+      border: 1px solid rgba(255,255,255,0.65);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }}
+    .notice-banner {{
+      margin-top: 12px;
+      border: 1px solid rgba(180,83,9,0.24);
+      background: linear-gradient(135deg, rgba(255,247,237,0.95), rgba(255,251,235,0.92));
+      color: #9a3412;
+      border-radius: 16px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      box-shadow: 0 10px 24px rgba(180,83,9,0.08);
+    }}
+    .hero h1 {{
+      margin: 0;
+      font-size: clamp(22px, 3vw, 34px);
+      line-height: 1.04;
+      letter-spacing: -0.04em;
+    }}
+    .search-bar {{
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: 560px;
+      padding: 10px 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(31,42,55,0.10);
+      background: rgba(255,255,255,0.78);
+    }}
+    .search-bar span {{
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }}
+    .search-input {{
+      width: 100%;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 600;
+    }}
+    .search-input::placeholder {{
+      color: #94a3b8;
+      font-weight: 500;
+    }}
+    .meta {{
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }}
+    .meta span, .pill {{
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }}
+    .market-overview {{
+      margin-top: 16px;
+      padding: 14px;
+    }}
+    .market-overview-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }}
+    .market-overview-head h2 {{
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }}
+    .market-overview-head p {{
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .market-index-grid {{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .market-card {{
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.72);
+    }}
+    .market-card-button {{
+      width: 100%;
+      border: none;
+      background: transparent;
+      padding: 12px 14px;
+      text-align: left;
+      color: inherit;
+      cursor: pointer;
+    }}
+    .market-card-button:disabled {{
+      cursor: default;
+    }}
+    .market-card-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .market-card-head strong {{
+      color: var(--ink);
+      font-size: 13px;
+      letter-spacing: -0.02em;
+    }}
+    .market-card-price {{
+      margin-top: 10px;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+    }}
+    .market-card-price-row {{
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }}
+    .market-card-pct {{
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .market-card-meta {{
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .market-stat-grid {{
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .market-stat {{
+      padding: 12px 14px;
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.72);
+    }}
+    .market-stat span {{
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .market-stat strong {{
+      display: block;
+      margin-top: 8px;
+      font-size: 18px;
+      letter-spacing: -0.03em;
+    }}
+    .index-modal {{
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(18, 24, 30, 0.42);
+      backdrop-filter: blur(6px);
+      z-index: 31;
+    }}
+    .index-modal.open {{
+      display: flex;
+    }}
+    .index-modal-card {{
+      width: min(720px, calc(100vw - 24px));
+      max-height: min(90vh, 840px);
+      overflow: auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }}
+    .index-modal-head {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }}
+    .index-modal-head h3 {{
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: -0.04em;
+    }}
+    .index-modal-head p {{
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }}
+    .index-summary-grid {{
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .index-summary-item,
+    .index-leader-item {{
+      padding: 12px 14px;
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.74);
+    }}
+    .index-summary-item span,
+    .index-leader-item span {{
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .index-summary-item strong {{
+      display: block;
+      margin-top: 8px;
+      font-size: 18px;
+      letter-spacing: -0.03em;
+    }}
+    .index-leader-list {{
+      margin-top: 14px;
+      display: grid;
+      gap: 10px;
+    }}
+    .index-leader-item strong {{
+      display: block;
+      font-size: 16px;
+      letter-spacing: -0.03em;
+    }}
+    .index-leader-item em {{
+      display: block;
+      margin-top: 8px;
+      font-style: normal;
+      font-size: 12px;
+      color: #334155;
+      line-height: 1.45;
+    }}
+    .summary-table-wrap, .panel {{
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+    }}
+    .summary-table-wrap {{
+      margin-top: 16px;
+      padding: 6px 10px 10px;
+      overflow-x: auto;
+    }}
+    .removed-panel {{
+      margin-top: 12px;
+      padding: 10px 12px 12px;
+      background: rgba(255,250,242,0.74);
+      border: 1px dashed rgba(31,42,55,0.16);
+      border-radius: 18px;
+    }}
+    .removed-panel[hidden] {{
+      display: none;
+    }}
+    .removed-head {{
+      display: block;
+    }}
+    .removed-head h3 {{
+      margin: 0;
+      font-size: 13px;
+    }}
+    .removed-head p {{
+      margin: 2px 0 0;
+      font-size: 10px;
+      color: var(--muted);
+    }}
+    .removed-list {{
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    .removed-item {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.76);
+    }}
+    .removed-info {{
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 92px;
+    }}
+    .removed-info .stock-name {{
+      font-size: 13px;
+    }}
+    .removed-item .status-select {{
+      min-width: 80px;
+    }}
+    .section-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 22px 2px 8px;
+    }}
+    .section-head h2 {{
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }}
+    .section-head p {{
+      margin: 0;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .summary-table {{
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 700px;
+    }}
+    .summary-table th,
+    .summary-table td {{
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid rgba(31,42,55,0.08);
+      vertical-align: middle;
+    }}
+    .index-cell {{
+      width: 48px;
+      text-align: center !important;
+      color: var(--muted);
+      white-space: nowrap;
+    }}
+    .nowrap-cell {{
+      white-space: nowrap;
+    }}
+    .summary-table th {{
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }}
+    .sort-button {{
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: none;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-transform: inherit;
+      letter-spacing: inherit;
+    }}
+    .sort-button:hover {{
+      color: var(--accent);
+    }}
+    .sort-indicator {{
+      min-width: 10px;
+      font-size: 10px;
+      color: rgba(100,116,139,0.72);
+    }}
+    .sort-button[data-active="true"] .sort-indicator {{
+      color: var(--accent);
+    }}
+    .summary-table tbody tr:last-child td {{
+      border-bottom: none;
+    }}
+    .summary-table tbody tr:hover {{
+      background: rgba(15,118,110,0.05);
+    }}
+    .summary-table tbody tr[data-watchlist-row="true"] {{
+      cursor: pointer;
+    }}
+    .holding-chip-list {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .holding-chip {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: rgba(31,42,55,0.06);
+      color: #334155;
+      font-size: 11px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }}
+    .holding-chip small {{
+      color: var(--muted);
+      font-size: 10px;
+    }}
+    .holding-chip.empty {{
+      color: var(--muted);
+    }}
+    .institution-note {{
+      margin-top: 12px;
+    }}
+    .institution-table td {{
+      vertical-align: top;
+    }}
+    .report-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }}
+    .report-card {{
+      display: block;
+      padding: 14px 15px;
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.74);
+      text-decoration: none;
+      color: inherit;
+    }}
+    .report-card-head {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }}
+    .report-card-head strong {{
+      display: block;
+      font-size: 16px;
+      letter-spacing: -0.03em;
+    }}
+    .report-card-head span,
+    .report-card-head em {{
+      font-size: 11px;
+      color: var(--muted);
+      font-style: normal;
+    }}
+    .report-card-tag {{
+      display: inline-flex;
+      margin-top: 10px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(15,118,110,0.10);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+    }}
+    .report-card h3 {{
+      margin: 12px 0 6px;
+      font-size: 15px;
+      line-height: 1.35;
+      letter-spacing: -0.02em;
+    }}
+    .report-card p {{
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #334155;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }}
+    .report-meta-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }}
+    .report-meta-card {{
+      padding: 12px 14px;
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.72);
+    }}
+    .report-meta-card span {{
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .report-meta-card strong {{
+      display: block;
+      margin-top: 8px;
+      font-size: 14px;
+      line-height: 1.4;
+    }}
+    .pct-rise {{
+      color: var(--rise);
+      font-weight: 700;
+    }}
+    .pct-fall {{
+      color: var(--fall);
+      font-weight: 700;
+    }}
+    .pct-flat {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    .stock-trigger {{
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      border: none;
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }}
+    .stock-trigger:hover .stock-name {{
+      color: var(--accent);
+    }}
+    .stock-name {{
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }}
+    .stock-code {{
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }}
+    .status-select {{
+      min-width: 88px;
+      border: 1px solid rgba(15,118,110,0.16);
+      background: rgba(15,118,110,0.08);
+      color: var(--accent);
+      border-radius: 10px;
+      padding: 6px 24px 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      outline: none;
+    }}
+    .join-watchlist-select {{
+      min-width: 96px;
+      border: 1px solid rgba(15,118,110,0.16);
+      background: rgba(15,118,110,0.08);
+      color: var(--accent);
+      border-radius: 10px;
+      padding: 6px 24px 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      outline: none;
+    }}
+    .join-watchlist-select:disabled {{
+      color: var(--muted);
+      border-color: rgba(31,42,55,0.10);
+      background: rgba(31,42,55,0.04);
+      cursor: not-allowed;
+    }}
+    .status-select[data-state="removed"] {{
+      color: #9a3412;
+      border-color: rgba(154,52,18,0.16);
+      background: rgba(154,52,18,0.08);
+    }}
+    .join-watchlist-select[data-state="removed"],
+    .join-watchlist-select[data-state="pending"] {{
+      color: #9a3412;
+      border-color: rgba(154,52,18,0.16);
+      background: rgba(154,52,18,0.08);
+    }}
+    .join-watchlist-select[data-state="joined"],
+    .join-watchlist-select[data-state="active"] {{
+      color: var(--accent);
+      border-color: rgba(15,118,110,0.16);
+      background: rgba(15,118,110,0.08);
+    }}
+    .strong-name-cell {{
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }}
+    .news-cell {{
+      min-width: 240px;
+      max-width: 320px;
+    }}
+    .news-link {{
+      display: block;
+      color: inherit;
+      text-decoration: none;
+    }}
+    .news-link:hover .news-summary {{
+      color: var(--accent);
+    }}
+    .news-summary {{
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      font-size: 12px;
+      line-height: 1.35;
+      color: #334155;
+    }}
+    .news-time {{
+      display: block;
+      margin-top: 3px;
+      font-size: 10px;
+      color: var(--muted);
+    }}
+    .modal {{
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(18, 24, 30, 0.42);
+      backdrop-filter: blur(6px);
+      z-index: 30;
+    }}
+    .modal.open {{
+      display: flex;
+    }}
+    .modal-card {{
+      width: min(1240px, calc(100vw - 24px));
+      max-height: min(94vh, 980px);
+      overflow: hidden;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 10px 10px 8px;
+    }}
+    .modal-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 2px 4px 6px;
+    }}
+    .modal-head h3 {{
+      margin: 0;
+      font-size: 15px;
+    }}
+    .modal-head p {{
+      margin: 2px 0 0;
+      font-size: 10px;
+      color: var(--muted);
+    }}
+    .modal-close {{
+      border: none;
+      background: rgba(31,42,55,0.08);
+      color: var(--ink);
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+    }}
+    .chart {{
+      height: min(44vh, 360px);
+      margin-top: 2px;
+    }}
+    .chart-side {{
+      display: grid;
+      grid-template-rows: auto auto;
+      gap: 8px;
+      min-width: 0;
+    }}
+    .chart-insights {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }}
+    .chart-insights .research-section {{
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.68);
+      padding: 10px;
+      margin-top: 0;
+    }}
+    .chart-insights .research-section.full-span {{
+      grid-column: 1 / -1;
+    }}
+    .modal-body {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+      gap: 10px;
+      align-items: start;
+    }}
+    .research-panel {{
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.68);
+      padding: 10px;
+    }}
+    .research-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 8px;
+    }}
+    .research-metric {{
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.7);
+      padding: 7px 8px;
+    }}
+    .research-metric label {{
+      display: block;
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }}
+    .research-metric strong {{
+      font-size: 12px;
+      line-height: 1.3;
+    }}
+    .research-panel .research-section + .research-section {{
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed rgba(31,42,55,0.12);
+    }}
+    .research-section h4 {{
+      margin: 0 0 4px;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }}
+    .research-section p {{
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #334155;
+      white-space: pre-wrap;
+    }}
+    @media (max-width: 860px) {{
+      .app-shell {{
+        grid-template-columns: 1fr;
+        width: min(100vw, calc(100vw - 12px));
+        padding-top: 12px;
+      }}
+      .sidebar {{
+        position: static;
+        min-height: 0;
+      }}
+      .sidebar-nav {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .market-index-grid,
+      .market-stat-grid,
+      .index-summary-grid,
+      .report-meta-grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .report-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .modal {{
+        padding: 12px;
+      }}
+      .modal-card {{
+        width: calc(100vw - 12px);
+      }}
+      .modal-body {{
+        grid-template-columns: 1fr;
+      }}
+      .research-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .chart {{
+        height: 28vh;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <strong>A股看板</strong>
+        <span>{AS_OF.isoformat()}</span>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="sidebar-link active" type="button" data-view-target="market-view">市场行情</button>
+        <button class="sidebar-link" type="button" data-view-target="institution-view">机构持仓</button>
+        <button class="sidebar-link" type="button" data-view-target="report-view">投研报告</button>
+      </nav>
+    </aside>
+    <main class="wrap">
+    <section class="page-view active" id="market-view">
+    <section class="hero">
+      <h1>股票跟踪看板</h1>
+      <div class="search-bar">
+        <span>搜索股票</span>
+        <input id="stock-search" class="search-input" type="text" placeholder="输入股票名称或代码，例如 美利云 / 000815" />
+      </div>
+      <div class="meta">
+        <span>更新日期：{AS_OF.isoformat()}</span>
+        <span>行情数据截至：{latest_market_date or '-'}</span>
+        <span>行情区间：近30个交易日</span>
+        <span>数据源：{data_source_label}</span>
+      </div>
+      {stale_notice_html}
+    </section>
+    <section class="market-overview panel">
+      <div class="market-overview-head">
+        <div>
+          <h2>整体市场</h2>
+          <p>指数用 iFinD，成交统计按沪市与深市主指数口径汇总</p>
+        </div>
+        <span class="pill">统计日：{overview_trade_date}</span>
+      </div>
+      <div class="market-index-grid">
+        {index_cards_html}
+      </div>
+      <div class="market-stat-grid">
+        {overview_metrics_html}
+      </div>
+    </section>
+    <div class="section-head">
+      <div>
+        <h2>当日强势股</h2>
+      </div>
+      <span class="pill">共 {len(strong_stocks)} 只</span>
+    </div>
+    <section class="summary-table-wrap">
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>编号</th>
+            <th>股票</th>
+            <th>主营方向</th>
+            <th>总市值 / 流通市值</th>
+            <th>当日成交额</th>
+            <th>换手率</th>
+            <th>当日涨幅</th>
+            <th>最新新闻</th>
+            <th>加入自选</th>
+          </tr>
+        </thead>
+        <tbody id="strong-stocks-table-body">
+          {''.join(strong_rows)}
+        </tbody>
+      </table>
+    </section>
+    <div class="section-head">
+      <div>
+        <h2>自选跟踪</h2>
+        <p>点击股票名称可查看近 30 日 K 线、成交额和研究摘要</p>
+      </div>
+    </div>
+    <section class="summary-table-wrap">
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>编号</th>
+            <th>股票</th>
+            <th>主营方向</th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="floatMarketCap" data-default-direction="desc" data-active="true"><span>总市值 / 流通市值</span><span class="sort-indicator">↓</span></button></th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="todayAmount" data-default-direction="desc"><span>当日成交额</span><span class="sort-indicator">↕</span></button></th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="turnoverRate" data-default-direction="desc"><span>换手率</span><span class="sort-indicator">↕</span></button></th>
+            <th>最新收盘</th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="todayPct" data-default-direction="desc"><span>当日涨幅</span><span class="sort-indicator">↕</span></button></th>
+            <th>最新新闻</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody id="watchlist-table-body">
+          {''.join(table_rows)}
+        </tbody>
+      </table>
+    </section>
+    <section class="removed-panel" id="removed-panel" hidden>
+      <div class="removed-head">
+        <div>
+          <h3>已移除</h3>
+          <p>这里保留被隐藏的股票，方便随时恢复到自选跟踪</p>
+        </div>
+      </div>
+      <div class="removed-list" id="removed-list"></div>
+    </section>
+    </section>
+    <section class="page-view" id="institution-view" hidden>
+      <section class="hero">
+        <h1>机构持仓</h1>
+        <div class="meta">
+          <span>更新日期：{AS_OF.isoformat()}</span>
+          <span>基金规模披露期：{((institution_rows_data[0].get('scaleReportDate') if institution_rows_data else '') or '-')}</span>
+          <span>数据源：{institution_holdings.get('source') or '公开数据源'}</span>
+        </div>
+        <div class="notice-banner institution-note">
+          iFinD 基金能力验证：
+          {"已确认支持 .OF 基金行情历史" if institution_probe.get("supportsFundQuotes") else "当前未确认 .OF 基金行情历史"}
+          。前十大重仓股与基金体量当前使用天天基金最近披露季报口径。
+        </div>
+      </section>
+      <div class="section-head">
+        <div>
+          <h2>重点基金持仓</h2>
+          <p>{institution_probe.get('notes') or '基金规模和前十大重仓股按最近季报披露整理'}</p>
+        </div>
+        <span class="pill">共 {len(institution_rows_data)} 只</span>
+      </div>
+      <section class="summary-table-wrap">
+        <table class="summary-table institution-table">
+          <thead>
+            <tr>
+              <th>编号</th>
+              <th>基金名称</th>
+              <th>基金体量</th>
+              <th>前10大重仓股</th>
+            </tr>
+          </thead>
+          <tbody id="institution-table-body">
+            {''.join(institution_rows_html)}
+          </tbody>
+        </table>
+      </section>
+    </section>
+    <section class="page-view" id="report-view" hidden>
+      <section class="hero">
+        <h1>投研报告</h1>
+        <div class="meta">
+          <span>更新日期：{AS_OF.isoformat()}</span>
+          <span>当前收录：{len(report_news_candidates)} 条</span>
+          <span>用途：为后续卖方/知识星球/公告研报入口预留统一视图</span>
+        </div>
+        <div class="notice-banner institution-note">
+          这个页签先挂了独立容器。当前内容先用本地已收录的重要公告/新闻做占位，
+          后面接入卖方报告或知识星球内容时，直接往这里并即可，不再改导航结构。
+        </div>
+      </section>
+      <div class="report-meta-grid">
+        <article class="report-meta-card">
+          <span>当前主要来源</span>
+          <strong>本地看板已抓取公告 / 重要新闻</strong>
+        </article>
+        <article class="report-meta-card">
+          <span>基金链路状态</span>
+          <strong>{"iFinD 已确认支持基金行情；持仓仍走公开源" if institution_probe.get("supportsFundQuotes") else "当前仍以公开源为主"}</strong>
+        </article>
+        <article class="report-meta-card">
+          <span>后续接入位</span>
+          <strong>知识星球 / 卖方报告 / 手工导入摘要</strong>
+        </article>
+      </div>
+      <div class="section-head">
+        <div>
+          <h2>本地收录</h2>
+          <p>先用今天看板里已收录的重要公告和新闻做报告池占位</p>
+        </div>
+        <span class="pill">共 {len(report_news_candidates)} 条</span>
+      </div>
+      <section class="summary-table-wrap">
+        <div class="report-grid">
+          {''.join(report_cards_html) or '<div class="report-card"><h3>暂无投研内容</h3><p>当前还没有可展示的报告条目。</p></div>'}
+        </div>
+      </section>
+    </section>
+    <div class="modal" id="stock-modal" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <h3 id="modal-title">近30日价格K线与成交量</h3>
+            <p id="modal-subtitle">点击表格中的股票名称查看</p>
+          </div>
+          <button class="modal-close" id="modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="chart-side">
+            <div id="modal-chart" class="chart"></div>
+            <div class="chart-insights">
+              <div class="research-section full-span">
+                <h4 id="research-margin-title">融资融券</h4>
+                <div class="research-grid">
+                  <div class="research-metric">
+                    <label>融资余额</label>
+                    <strong id="research-fin-balance">-</strong>
+                  </div>
+                  <div class="research-metric">
+                    <label>融券余额</label>
+                    <strong id="research-loan-balance">-</strong>
+                  </div>
+                  <div class="research-metric">
+                    <label>融资买入额</label>
+                    <strong id="research-fin-buy-amount">-</strong>
+                  </div>
+                </div>
+              </div>
+              <div class="research-section">
+                <h4>前三大细分业务</h4>
+                <p id="research-business-segments">暂无</p>
+              </div>
+              <div class="research-section">
+                <h4>前五大客户</h4>
+                <p id="research-top-customers">暂无</p>
+              </div>
+            </div>
+          </div>
+          <aside class="research-panel">
+            <div class="research-grid">
+              <div class="research-metric">
+                <label>2025营收</label>
+                <strong id="research-revenue">-</strong>
+              </div>
+              <div class="research-metric">
+                <label>2025同比</label>
+                <strong id="research-yoy">-</strong>
+              </div>
+              <div class="research-metric">
+                <label>2026Q1营收</label>
+                <strong id="research-q1-revenue">-</strong>
+              </div>
+              <div class="research-metric">
+                <label>2026Q1营收同比</label>
+                <strong id="research-q1-revenue-yoy">-</strong>
+              </div>
+              <div class="research-metric">
+                <label>2026Q1净利润</label>
+                <strong id="research-q1-net-profit">-</strong>
+              </div>
+              <div class="research-metric">
+                <label>2026Q1净利润同比</label>
+                <strong id="research-q1-net-profit-yoy">-</strong>
+              </div>
+              <div class="research-metric">
+                <label>2026新订单/新增项目</label>
+                <strong id="research-orders">-</strong>
+              </div>
+              <div class="research-metric">
+                <label>动态PE</label>
+                <strong id="research-pe">-</strong>
+              </div>
+            </div>
+            <div class="research-section">
+              <h4>最新新闻</h4>
+              <p id="research-latest-news">暂无</p>
+            </div>
+            <div class="research-section">
+              <h4>核心逻辑</h4>
+              <p id="research-logic">暂无</p>
+            </div>
+            <div class="research-section">
+              <h4>核心用户及订单</h4>
+              <p id="research-users">暂无</p>
+            </div>
+            <div class="research-section">
+              <h4>前五大股东</h4>
+              <p id="research-top-holders">暂无</p>
+            </div>
+            <div class="research-section">
+              <h4>核心竞争力</h4>
+              <p id="research-edge">暂无</p>
+            </div>
+            <div class="research-section">
+              <h4>备注</h4>
+              <p id="research-notes">暂无</p>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <div class="index-modal" id="index-modal" aria-hidden="true">
+      <div class="index-modal-card">
+        <div class="index-modal-head">
+          <div>
+            <h3 id="index-modal-title">指数详情</h3>
+            <p id="index-modal-subtitle">查看代表性权重股参考</p>
+          </div>
+          <button class="modal-close" id="index-modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="index-summary-grid">
+          <div class="index-summary-item">
+            <span>最新点位</span>
+            <strong id="index-modal-close-value">-</strong>
+          </div>
+          <div class="index-summary-item">
+            <span>当日涨跌幅</span>
+            <strong id="index-modal-pct">-</strong>
+          </div>
+          <div class="index-summary-item">
+            <span>当日成交额</span>
+            <strong id="index-modal-amount">-</strong>
+          </div>
+        </div>
+        <div class="index-leader-list" id="index-leader-list"></div>
+      </div>
+    </div>
+  </main>
+  </div>
+  <script>
+    const dataset = {json.dumps(dataset, ensure_ascii=False)};
+    const strongStocks = {json.dumps(strong_stocks, ensure_ascii=False)};
+    const marketOverview = {json.dumps(market_overview, ensure_ascii=False)};
+    const institutionHoldings = {json.dumps(institution_holdings, ensure_ascii=False)};
+    const datasetCodeSet = new Set(dataset.map(item => item.code));
+    const momentumExtras = strongStocks.filter((item, idx, list) => {{
+      if (datasetCodeSet.has(item.code)) return false;
+      return list.findIndex(other => other.code === item.code) === idx;
+    }});
+    const modalItems = dataset.concat(momentumExtras);
+    const modalIndexByCode = Object.fromEntries(modalItems.map((item, idx) => [item.code, idx]));
+    const indexCards = marketOverview.indices || [];
+    const indexCardByCode = Object.fromEntries(indexCards.map(item => [item.code, item]));
+
+    function buildChartOption(item) {{
+      const category = item.kline.map(row => row[0]);
+      const candleData = item.kline.map(row => [row[1], row[2], row[3], row[4]]);
+      const volumeData = item.kline.map(row => row[5]);
+      const colors = volumeData.map((_, idx) => {{
+        if (idx === 0) return '#0f766e';
+        const prev = candleData[idx - 1][1];
+        const curr = candleData[idx][1];
+        return curr >= prev ? '#d64545' : '#1f8f67';
+      }});
+
+      return {{
+        animation: false,
+        backgroundColor: 'transparent',
+        color: ['#d64545', '#1f8f67', '#0f766e'],
+        tooltip: {{
+          trigger: 'axis',
+          axisPointer: {{ type: 'cross' }},
+          backgroundColor: 'rgba(29, 28, 26, 0.92)',
+          borderWidth: 0,
+          textStyle: {{ color: '#fff' }}
+        }},
+        grid: [
+          {{ left: 56, right: 20, top: 30, height: 200 }},
+          {{ left: 56, right: 20, top: 260, height: 70 }}
+        ],
+        xAxis: [
+          {{
+            type: 'category',
+            data: category,
+            boundaryGap: true,
+            axisLine: {{ lineStyle: {{ color: 'rgba(31,42,55,0.18)' }} }},
+            axisLabel: {{ color: '#6b7280', fontSize: 11 }},
+            min: 'dataMin',
+            max: 'dataMax'
+          }},
+          {{
+            type: 'category',
+            gridIndex: 1,
+            data: category,
+            boundaryGap: true,
+            axisLine: {{ lineStyle: {{ color: 'rgba(31,42,55,0.18)' }} }},
+            axisLabel: {{ show: false }},
+            axisTick: {{ show: false }},
+            min: 'dataMin',
+            max: 'dataMax'
+          }}
+        ],
+        yAxis: [
+          {{
+            scale: true,
+            splitLine: {{ lineStyle: {{ color: 'rgba(31,42,55,0.08)' }} }},
+            axisLabel: {{ color: '#6b7280' }}
+          }},
+          {{
+            scale: true,
+            gridIndex: 1,
+            splitNumber: 2,
+            splitLine: {{ show: false }},
+            axisLabel: {{
+              color: '#6b7280',
+              formatter: value => (value / 10000).toFixed(0) + '万'
+            }}
+          }}
+        ],
+        series: [
+          {{
+            name: item.name + ' K线',
+            type: 'candlestick',
+            data: candleData,
+            itemStyle: {{
+              color: '#d64545',
+              color0: '#1f8f67',
+              borderColor: '#d64545',
+              borderColor0: '#1f8f67'
+            }}
+          }},
+          {{
+            name: '成交量',
+            type: 'bar',
+            xAxisIndex: 1,
+            yAxisIndex: 1,
+            data: volumeData.map((value, idx) => {{
+              return {{
+                value,
+                itemStyle: {{ color: colors[idx] }}
+              }};
+            }})
+          }}
+        ]
+      }};
+    }}
+
+    const modal = document.getElementById('stock-modal');
+    const modalClose = document.getElementById('modal-close');
+    const modalTitle = document.getElementById('modal-title');
+    const modalSubtitle = document.getElementById('modal-subtitle');
+    const modalChartNode = document.getElementById('modal-chart');
+    const stockSearch = document.getElementById('stock-search');
+    const strongStocksTableBody = document.getElementById('strong-stocks-table-body');
+    const watchlistTableBody = document.getElementById('watchlist-table-body');
+    const removedPanel = document.getElementById('removed-panel');
+    const removedList = document.getElementById('removed-list');
+    const researchRevenue = document.getElementById('research-revenue');
+    const researchYoy = document.getElementById('research-yoy');
+    const researchQ1Revenue = document.getElementById('research-q1-revenue');
+    const researchQ1RevenueYoY = document.getElementById('research-q1-revenue-yoy');
+    const researchQ1NetProfit = document.getElementById('research-q1-net-profit');
+    const researchQ1NetProfitYoY = document.getElementById('research-q1-net-profit-yoy');
+    const researchOrders = document.getElementById('research-orders');
+    const researchPe = document.getElementById('research-pe');
+    const researchFinBalance = document.getElementById('research-fin-balance');
+    const researchLoanBalance = document.getElementById('research-loan-balance');
+    const researchFinBuyAmount = document.getElementById('research-fin-buy-amount');
+    const researchMarginTitle = document.getElementById('research-margin-title');
+    const researchLatestNews = document.getElementById('research-latest-news');
+    const researchLogic = document.getElementById('research-logic');
+    const researchUsers = document.getElementById('research-users');
+    const researchEdge = document.getElementById('research-edge');
+    const researchTopHolders = document.getElementById('research-top-holders');
+    const researchBusinessSegments = document.getElementById('research-business-segments');
+    const researchTopCustomers = document.getElementById('research-top-customers');
+    const researchNotes = document.getElementById('research-notes');
+    const indexModal = document.getElementById('index-modal');
+    const indexModalClose = document.getElementById('index-modal-close');
+    const indexModalTitle = document.getElementById('index-modal-title');
+    const indexModalSubtitle = document.getElementById('index-modal-subtitle');
+    const indexModalCloseValue = document.getElementById('index-modal-close-value');
+    const indexModalPct = document.getElementById('index-modal-pct');
+    const indexModalAmount = document.getElementById('index-modal-amount');
+    const indexLeaderList = document.getElementById('index-leader-list');
+    const sidebarLinks = [...document.querySelectorAll('.sidebar-link[data-view-target]')];
+    const pageViews = [...document.querySelectorAll('.page-view[id]')];
+    const modalChart = echarts.init(modalChartNode, null, {{ renderer: 'canvas' }});
+    const DASHBOARD_VIEW_KEY = 'astock_dashboard_view_v1';
+
+    function setActiveView(viewId) {{
+      pageViews.forEach(view => {{
+        const active = view.id === viewId;
+        view.hidden = !active;
+        view.classList.toggle('active', active);
+      }});
+      sidebarLinks.forEach(link => {{
+        link.classList.toggle('active', link.dataset.viewTarget === viewId);
+      }});
+      window.localStorage.setItem(DASHBOARD_VIEW_KEY, viewId);
+      if (viewId === 'market-view') {{
+        setTimeout(() => modalChart.resize(), 0);
+      }}
+    }}
+
+    function openIndexModalByCode(code) {{
+      const item = indexCardByCode[code];
+      if (!item || !item.detail) return;
+      indexModalTitle.textContent = item.detail.title || (item.name + ' 详情');
+      indexModalSubtitle.textContent = (item.detail.note || '代表性权重股参考') + ' · ' + (item.date || '');
+      indexModalCloseValue.textContent = item.latestClose == null ? '暂无' : Number(item.latestClose).toFixed(2);
+      indexModalPct.textContent = item.pct == null ? '暂无' : ((Number(item.pct) >= 0 ? '+' : '') + Number(item.pct).toFixed(2) + '%');
+      indexModalPct.className = 'pct-' + ((Number(item.pct) || 0) > 0 ? 'rise' : (Number(item.pct) || 0) < 0 ? 'fall' : 'flat');
+      indexModalAmount.textContent = item.amount == null ? '暂无' : ((Number(item.amount) / 1e8).toFixed(2) + '亿');
+      indexLeaderList.innerHTML = (item.detail.leaders || []).map((leader, idx) => `
+        <article class="index-leader-item">
+          <span>${{idx + 1}}. ${{leader.code || ''}}</span>
+          <strong>${{leader.name || '-'}}</strong>
+          <em>${{leader.tag || ''}}</em>
+        </article>
+      `).join('');
+      indexModal.classList.add('open');
+      indexModal.setAttribute('aria-hidden', 'false');
+    }}
+
+    function openStockModalByCode(code) {{
+      const index = modalIndexByCode[code];
+      if (index == null) return;
+      const item = modalItems[index];
+      if (!item.kline || !item.kline.length) return;
+      modalTitle.textContent = item.name + ' 近30日价格K线与成交量';
+      modalSubtitle.textContent = item.code + ' · 总市值/流通市值 ' + (item.totalMarketCap / 1e8).toFixed(2) + '亿 / ' + (item.floatMarketCap / 1e8).toFixed(2) + '亿 · 当日成交额 ' + (item.todayAmount / 1e8).toFixed(2) + '亿';
+      modalChart.setOption(buildChartOption(item), true);
+      researchRevenue.textContent = item.research.revenue2025 || '暂无';
+      researchYoy.textContent = item.research.revenueYoY || '暂无';
+      researchQ1Revenue.textContent = item.research.q1Revenue2026 || '暂无';
+      researchQ1RevenueYoY.textContent = item.research.q1RevenueYoY2026 || '暂无';
+      researchQ1NetProfit.textContent = item.research.q1NetProfit2026 || '暂无';
+      researchQ1NetProfitYoY.textContent = item.research.q1NetProfitYoY2026 || '暂无';
+      researchOrders.textContent = item.research.newOrders2026 || '暂无';
+      researchPe.textContent = item.peRatio == null ? '暂无' : item.peRatio.toFixed(2);
+      const marginFinancing = item.marginFinancing || {{}};
+      researchMarginTitle.textContent = '融资融券' + (marginFinancing.date ? ' · ' + marginFinancing.date.slice(5) : '');
+      researchFinBalance.textContent = marginFinancing.finBalance == null ? '暂无' : ((marginFinancing.finBalance / 1e8).toFixed(2) + '亿');
+      researchLoanBalance.textContent = marginFinancing.loanBalance == null ? '暂无' : ((marginFinancing.loanBalance / 1e8).toFixed(2) + '亿');
+      researchFinBuyAmount.textContent = marginFinancing.finBuyAmount == null ? '暂无' : ((marginFinancing.finBuyAmount / 1e8).toFixed(2) + '亿');
+      const latestNews = item.latestNews || {{}};
+      researchLatestNews.textContent = latestNews.summary
+        ? ((latestNews.time ? latestNews.time + '\\n' : '') + latestNews.summary)
+        : '暂无';
+      researchLogic.textContent = item.research.coreLogic || '暂无研究摘要';
+      researchUsers.textContent = item.research.coreUsers || '暂无研究摘要';
+      researchEdge.textContent = item.research.coreEdge || '暂无研究摘要';
+      const topHolders = item.topHolders || {{}};
+      const holderLines = topHolders.holders || [];
+      const topHolderPrefix = [];
+      if (topHolders.reportDate) topHolderPrefix.push('报告期：' + topHolders.reportDate);
+      if (topHolders.totalRatio != null) topHolderPrefix.push('前五大合计：' + Number(topHolders.totalRatio).toFixed(2) + '%');
+      researchTopHolders.textContent = holderLines.length
+        ? (topHolderPrefix.length ? topHolderPrefix.join('\\n') + '\\n' : '') + holderLines.join('\\n')
+        : '暂无';
+      const businessSegments = item.businessSegments || {{}};
+      const segmentLines = (businessSegments.items || []).map((row, idx) => {{
+        const revenueText = row.revenue == null ? '暂无营收' : (Number(row.revenue) / 1e8).toFixed(2) + '亿元';
+        const ratioText = row.ratio == null ? '' : ' / ' + (Number(row.ratio) * 100).toFixed(2) + '%';
+        return `${{idx + 1}}. ${{row.name || '-'}}：${{revenueText}}${{ratioText}}`;
+      }});
+      const segmentPrefix = [];
+      if (businessSegments.reportDate) segmentPrefix.push('报告期：' + businessSegments.reportDate);
+      if (businessSegments.category) segmentPrefix.push('口径：' + businessSegments.category);
+      researchBusinessSegments.textContent = segmentLines.length
+        ? (segmentPrefix.length ? segmentPrefix.join('\\n') + '\\n' : '') + segmentLines.join('\\n')
+        : '暂无';
+      const topCustomers = item.topCustomers || {{}};
+      const customerLines = (topCustomers.customers || []).map((row, idx) => {{
+        const amountText = row.amount == null ? '暂无金额' : (Number(row.amount) / 1e8).toFixed(2) + '亿元';
+        const ratioText = row.ratio == null ? '' : ' / ' + Number(row.ratio).toFixed(2) + '%';
+        return `${{idx + 1}}. ${{row.name || '-'}}：${{amountText}}${{ratioText}}`;
+      }});
+      const customerPrefix = [];
+      if (topCustomers.reportDate) customerPrefix.push('报告期：' + topCustomers.reportDate + '年报');
+      if (topCustomers.totalAmount != null) customerPrefix.push('前五大合计：' + (Number(topCustomers.totalAmount) / 1e8).toFixed(2) + '亿元');
+      if (topCustomers.totalRatio != null) customerPrefix.push('合计占比：' + Number(topCustomers.totalRatio).toFixed(2) + '%');
+      researchTopCustomers.textContent = customerLines.length
+        ? (customerPrefix.length ? customerPrefix.join('\\n') + '\\n' : '') + customerLines.join('\\n')
+        : (customerPrefix.length ? customerPrefix.join('\\n') : '暂无');
+      researchNotes.textContent = item.research.notes || '暂无';
+      modal.classList.add('open');
+      modal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => modalChart.resize(), 0);
+    }}
+
+    function closeStockModal() {{
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+    }}
+
+    function closeIndexModal() {{
+      indexModal.classList.remove('open');
+      indexModal.setAttribute('aria-hidden', 'true');
+    }}
+
+    const WATCHLIST_STORAGE_KEY = 'astock_watchlist_status_v1';
+    const WATCHLIST_STRONG_JOIN_KEY = 'astock_strong_join_v1';
+
+    function loadWatchlistStatus() {{
+      try {{
+        return JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{{}}');
+      }} catch (error) {{
+        return {{}};
+      }}
+    }}
+
+    function saveWatchlistStatus(statusMap) {{
+      window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(statusMap));
+    }}
+
+    function loadStrongJoinStatus() {{
+      try {{
+        return JSON.parse(window.localStorage.getItem(WATCHLIST_STRONG_JOIN_KEY) || '{{}}');
+      }} catch (error) {{
+        return {{}};
+      }}
+    }}
+
+    function saveStrongJoinStatus(statusMap) {{
+      window.localStorage.setItem(WATCHLIST_STRONG_JOIN_KEY, JSON.stringify(statusMap));
+    }}
+
+    function setSelectVisualState(select) {{
+      select.dataset.state = select.value;
+    }}
+
+    function formatYi(value) {{
+      const numeric = Number(value || 0);
+      return (numeric / 1e8).toFixed(2) + '亿';
+    }}
+
+    function formatYiRmb(value) {{
+      const numeric = Number(value || 0);
+      return (numeric / 1e8).toFixed(2) + '亿';
+    }}
+
+    function pctClass(value) {{
+      const numeric = Number(value);
+      if (Number.isNaN(numeric)) return 'pct-flat';
+      if (numeric > 0) return 'pct-rise';
+      if (numeric < 0) return 'pct-fall';
+      return 'pct-flat';
+    }}
+
+    const watchlistSortState = {{ field: 'floatMarketCap', direction: 'desc' }};
+
+    function parseRowNumber(row, key) {{
+      const raw = row.dataset[key];
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
+    }}
+
+    function compareNullableNumbers(a, b, direction) {{
+      const aMissing = a == null;
+      const bMissing = b == null;
+      if (aMissing && bMissing) return 0;
+      if (aMissing) return 1;
+      if (bMissing) return -1;
+      return direction === 'asc' ? a - b : b - a;
+    }}
+
+    function updateWatchlistSortIndicators() {{
+      document.querySelectorAll('[data-watchlist-sort]').forEach(button => {{
+        const active = button.dataset.watchlistSort === watchlistSortState.field;
+        button.dataset.active = active ? 'true' : 'false';
+        const indicator = button.querySelector('.sort-indicator');
+        if (indicator) {{
+          indicator.textContent = active ? (watchlistSortState.direction === 'asc' ? '↑' : '↓') : '↕';
+        }}
+      }});
+    }}
+
+    function applyWatchlistSort() {{
+      const rows = [...watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]')];
+      rows.sort((a, b) => {{
+        const left = parseRowNumber(a, watchlistSortState.field);
+        const right = parseRowNumber(b, watchlistSortState.field);
+        const primary = compareNullableNumbers(left, right, watchlistSortState.direction);
+        if (primary !== 0) return primary;
+        return Number(b.dataset.floatMarketCap || 0) - Number(a.dataset.floatMarketCap || 0);
+      }});
+      rows.forEach(row => watchlistTableBody.appendChild(row));
+      updateWatchlistSortIndicators();
+      renumberTableRows();
+    }}
+
+    function renumberTableRows() {{
+      let strongIndex = 1;
+      strongStocksTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(row => {{
+        if (row.style.display === 'none') return;
+        const cell = row.querySelector('[data-index-cell="strong"]');
+        if (cell) cell.textContent = String(strongIndex++);
+      }});
+      let watchIndex = 1;
+      watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]').forEach(row => {{
+        if (row.style.display === 'none') return;
+        const cell = row.querySelector('[data-index-cell="watchlist"]');
+        if (cell) cell.textContent = String(watchIndex++);
+      }});
+    }}
+
+    function createSyntheticWatchlistRow(item) {{
+      const turnoverText = item.turnoverRate == null ? '-' : Number(item.turnoverRate).toFixed(2) + '%';
+      const latestCloseText = item.latestClose == null ? '-' : Number(item.latestClose).toFixed(2);
+      const todayPctText = item.todayPct == null ? '-' : (Number(item.todayPct) >= 0 ? '+' : '') + Number(item.todayPct).toFixed(2) + '%';
+      const pctCls = pctClass(item.todayPct);
+      const latestNews = item.latestNews || {{}};
+      const newsSummary = latestNews.summary || '-';
+      const newsTime = latestNews.time || '';
+      const newsHtml = latestNews.link
+        ? `<a class="news-link" href="${{latestNews.link}}" target="_blank" rel="noreferrer"><span class="news-summary">${{newsSummary}}</span><span class="news-time">${{newsTime}}</span></a>`
+        : `<div class="news-summary">${{newsSummary}}</div><div class="news-time">${{newsTime}}</div>`;
+      const wrapper = document.createElement('tbody');
+      wrapper.innerHTML = `
+        <tr data-watchlist-row="true" data-code="${{item.code}}" data-total-market-cap="${{Number(item.totalMarketCap || 0)}}" data-float-market-cap="${{Number(item.floatMarketCap || 0)}}" data-today-amount="${{Number(item.todayAmount || 0)}}" data-turnover-rate="${{item.turnoverRate == null ? '' : Number(item.turnoverRate)}}" data-today-pct="${{item.todayPct == null ? '' : Number(item.todayPct)}}" data-synthetic="true">
+          <td class="index-cell" data-index-cell="watchlist"></td>
+          <td data-search="${{item.name}} ${{item.code}}">
+            <div class="strong-name-cell">
+              <span class="stock-name">${{item.name}}</span>
+              <span class="stock-code">${{item.code}}</span>
+            </div>
+          </td>
+          <td>${{item.mainBusiness || '-'}}</td>
+          <td>${{formatYi(item.totalMarketCap)}} / ${{formatYi(item.floatMarketCap)}}</td>
+          <td>${{formatYiRmb(item.todayAmount)}}</td>
+          <td>${{turnoverText}}</td>
+          <td>${{latestCloseText}}</td>
+          <td class="${{pctCls}}">${{todayPctText}}</td>
+          <td class="news-cell">${{newsHtml}}</td>
+          <td>
+            <select class="status-select" data-code="${{item.code}}" aria-label="${{item.name}}状态">
+              <option value="active" selected>跟踪中</option>
+              <option value="removed">移除</option>
+            </select>
+          </td>
+        </tr>
+      `;
+      return wrapper.firstElementChild;
+    }}
+
+    function bindWatchlistRow(row) {{
+      if (row.dataset.boundRow === 'true') return;
+      row.dataset.boundRow = 'true';
+      row.addEventListener('click', event => {{
+        if (event.target.closest('select, option, button, a, input, textarea, label')) {{
+          return;
+        }}
+        openStockModalByCode(row.dataset.code);
+      }});
+      const select = row.querySelector('.status-select');
+      if (!select || select.dataset.boundSelect === 'true') return;
+      select.dataset.boundSelect = 'true';
+      const code = select.dataset.code;
+      const saved = watchlistStatusMap[code];
+      if (saved === 'removed') {{
+        select.value = 'removed';
+      }}
+      setSelectVisualState(select);
+      select.addEventListener('change', () => {{
+        watchlistStatusMap[code] = select.value;
+        if (select.value === 'active') {{
+          delete watchlistStatusMap[code];
+        }}
+        setSelectVisualState(select);
+        saveWatchlistStatus(watchlistStatusMap);
+        applyWatchlistVisibility();
+      }});
+    }}
+
+    function bindStrongStockRow(row) {{
+      if (row.dataset.boundRow === 'true') return;
+      row.dataset.boundRow = 'true';
+      row.addEventListener('click', event => {{
+        if (event.target.closest('select, option, button, a, input, textarea, label')) {{
+          return;
+        }}
+        openStockModalByCode(row.dataset.code);
+      }});
+    }}
+
+    function syncStrongStockStatusControls() {{
+      document.querySelectorAll('.join-watchlist-select').forEach(select => {{
+        const code = select.dataset.code;
+        if (select.dataset.watchlistMember === 'true') {{
+          const mainSelect = watchlistTableBody.querySelector(`.status-select[data-code="${{code}}"]`);
+          const value = mainSelect ? mainSelect.value : (watchlistStatusMap[code] === 'removed' ? 'removed' : 'active');
+          select.value = value === 'removed' ? 'removed' : 'active';
+          setSelectVisualState(select);
+          return;
+        }}
+        select.value = strongJoinMap[code] === 'joined' ? 'joined' : 'pending';
+        setSelectVisualState(select);
+      }});
+    }}
+
+    function syncStrongSelectionsIntoWatchlist() {{
+      watchlistTableBody.querySelectorAll('tr[data-synthetic="true"]').forEach(row => row.remove());
+      const existingCodes = new Set([...watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]:not([data-synthetic="true"])')].map(row => row.dataset.code));
+      strongStocks.forEach(item => {{
+        if (existingCodes.has(item.code)) return;
+        if (strongJoinMap[item.code] !== 'joined') return;
+        const row = createSyntheticWatchlistRow(item);
+        watchlistTableBody.appendChild(row);
+        bindWatchlistRow(row);
+      }});
+      applyWatchlistSort();
+      applyWatchlistVisibility();
+      syncStrongStockStatusControls();
+    }}
+
+    function renderRemovedList() {{
+      const removedRows = [...watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]')]
+        .filter(row => row.querySelector('.status-select')?.value === 'removed');
+      if (!removedRows.length) {{
+        removedPanel.hidden = true;
+        removedList.innerHTML = '';
+        return;
+      }}
+
+      removedPanel.hidden = false;
+      removedList.innerHTML = removedRows.map(row => {{
+        const code = row.dataset.code || '';
+        const name = row.querySelector('.stock-name')?.textContent || code;
+        return `
+          <div class="removed-item">
+            <div class="removed-info">
+              <span class="stock-name">${{name}}</span>
+              <span class="stock-code">${{code}}</span>
+            </div>
+            <select class="status-select" data-code="${{code}}" data-state="removed" aria-label="${{name}}状态">
+              <option value="active">跟踪中</option>
+              <option value="removed" selected>移除</option>
+            </select>
+          </div>
+        `;
+      }}).join('');
+
+      removedList.querySelectorAll('.status-select').forEach(select => {{
+        setSelectVisualState(select);
+        select.addEventListener('change', () => {{
+          const code = select.dataset.code;
+          const mainSelect = watchlistTableBody.querySelector(`.status-select[data-code="${{code}}"]`);
+          if (mainSelect) {{
+            mainSelect.value = select.value;
+            mainSelect.dispatchEvent(new Event('change'));
+          }}
+        }});
+      }});
+    }}
+
+    function applyWatchlistVisibility() {{
+      const keyword = stockSearch.value.trim().toLowerCase();
+      watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]').forEach(row => {{
+        const select = row.querySelector('.status-select');
+        const isRemoved = select && select.value === 'removed';
+        const haystack = (row.querySelector('td[data-search]')?.dataset.search || '').toLowerCase();
+        const matchesKeyword = !keyword || haystack.includes(keyword);
+        row.style.display = !isRemoved && matchesKeyword ? '' : 'none';
+      }});
+      renderRemovedList();
+      renumberTableRows();
+    }}
+
+    const watchlistStatusMap = loadWatchlistStatus();
+    const strongJoinMap = loadStrongJoinStatus();
+
+    document.querySelectorAll('.stock-trigger').forEach(node => {{
+      node.addEventListener('click', event => {{
+        event.stopPropagation();
+        openStockModalByCode(node.dataset.code);
+      }});
+    }});
+    document.querySelectorAll('.market-card-button[data-index-code]').forEach(node => {{
+      node.addEventListener('click', event => {{
+        event.stopPropagation();
+        openIndexModalByCode(node.dataset.indexCode);
+      }});
+    }});
+    sidebarLinks.forEach(link => {{
+      link.addEventListener('click', () => setActiveView(link.dataset.viewTarget));
+    }});
+
+    watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]').forEach(bindWatchlistRow);
+    strongStocksTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(bindStrongStockRow);
+
+    document.querySelectorAll('.join-watchlist-select').forEach(select => {{
+      const code = select.dataset.code;
+      if (select.dataset.watchlistMember === 'true') {{
+        const mainSelect = watchlistTableBody.querySelector(`.status-select[data-code="${{code}}"]`);
+        select.value = mainSelect?.value === 'removed' ? 'removed' : 'active';
+        setSelectVisualState(select);
+        select.addEventListener('change', () => {{
+          const targetValue = select.value === 'removed' ? 'removed' : 'active';
+          setSelectVisualState(select);
+          const nextMainSelect = watchlistTableBody.querySelector(`.status-select[data-code="${{code}}"]`);
+          if (nextMainSelect) {{
+            nextMainSelect.value = targetValue;
+            nextMainSelect.dispatchEvent(new Event('change'));
+          }}
+        }});
+        return;
+      }}
+      if (strongJoinMap[code] === 'joined') {{
+        select.value = 'joined';
+      }}
+      setSelectVisualState(select);
+      select.addEventListener('change', () => {{
+        if (select.value === 'joined') {{
+          strongJoinMap[code] = 'joined';
+        }} else {{
+          delete strongJoinMap[code];
+        }}
+        setSelectVisualState(select);
+        saveStrongJoinStatus(strongJoinMap);
+        syncStrongSelectionsIntoWatchlist();
+      }});
+    }});
+
+    document.querySelectorAll('[data-watchlist-sort]').forEach(button => {{
+      button.addEventListener('click', () => {{
+        const field = button.dataset.watchlistSort;
+        const defaultDirection = button.dataset.defaultDirection || 'desc';
+        if (watchlistSortState.field === field) {{
+          watchlistSortState.direction = watchlistSortState.direction === 'desc' ? 'asc' : 'desc';
+        }} else {{
+          watchlistSortState.field = field;
+          watchlistSortState.direction = defaultDirection;
+        }}
+        applyWatchlistSort();
+        applyWatchlistVisibility();
+      }});
+    }});
+
+    stockSearch.addEventListener('input', () => {{
+      const keyword = stockSearch.value.trim().toLowerCase();
+      document.querySelectorAll('.summary-table tbody tr').forEach(row => {{
+        if (row.dataset.watchlistRow === 'true') return;
+        const haystack = (row.querySelector('td[data-search]')?.dataset.search || '').toLowerCase();
+        row.style.display = !keyword || haystack.includes(keyword) ? '' : 'none';
+      }});
+      applyWatchlistVisibility();
+      renumberTableRows();
+    }});
+
+    syncStrongSelectionsIntoWatchlist();
+    syncStrongStockStatusControls();
+    updateWatchlistSortIndicators();
+    applyWatchlistSort();
+    const savedView = window.localStorage.getItem(DASHBOARD_VIEW_KEY);
+    const allowedViews = new Set(['market-view', 'institution-view', 'report-view']);
+    setActiveView(allowedViews.has(savedView) ? savedView : 'market-view');
+
+    modalClose.addEventListener('click', closeStockModal);
+    modal.addEventListener('click', event => {{
+      if (event.target === modal) closeStockModal();
+    }});
+    indexModalClose.addEventListener('click', closeIndexModal);
+    indexModal.addEventListener('click', event => {{
+      if (event.target === indexModal) closeIndexModal();
+    }});
+    window.addEventListener('keydown', event => {{
+      if (event.key === 'Escape') {{
+        closeStockModal();
+        closeIndexModal();
+      }}
+    }});
+    window.addEventListener('resize', () => modalChart.resize());
+  </script>
+</body>
+</html>
+"""
+
+
+def hydrate_cached_dataset(dataset: list[dict]) -> list[dict]:
+    for item in dataset:
+        code = item.get("code", "")
+        item["mainBusiness"] = MAIN_BUSINESS_MAP.get(code, item.get("industry", ""))
+        item["research"] = build_research_payload(code, item.get("research", {}))
+        item["orderBook"] = item.get("orderBook") or {"time": "", "asks": [], "bids": []}
+        item["peRatio"] = item.get("peRatio")
+        item["marginFinancing"] = item.get("marginFinancing") or {
+            "date": "",
+            "finBalance": None,
+            "loanBalance": None,
+            "finBuyAmount": None,
+        }
+        item["topHolders"] = item.get("topHolders") or {"reportDate": "", "totalRatio": None, "holders": []}
+        item["businessSegments"] = item.get("businessSegments") or {"reportDate": "", "category": "", "items": []}
+        item["topCustomers"] = item.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
+        item["latestNews"] = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
+        holder_payload = item["topHolders"]
+        if holder_payload.get("totalRatio") is None:
+            ratio_sum = 0.0
+            ratio_found = False
+            for holder_line in holder_payload.get("holders", []):
+                match = re.search(r"\(([-+]?\d+(?:\.\d+)?)%\)", str(holder_line))
+                if not match:
+                    continue
+                ratio_sum += float(match.group(1))
+                ratio_found = True
+            if ratio_found:
+                holder_payload["totalRatio"] = round(ratio_sum, 2)
+        if item.get("turnoverRate") is None:
+            latest_close = item.get("latestClose") or 0
+            float_mcap = item.get("floatMarketCap") or 0
+            today_volume = item.get("todayVolume") or 0
+            free_float_shares = (float_mcap / latest_close) if latest_close else 0
+            item["turnoverRate"] = (today_volume / free_float_shares * 100.0) if free_float_shares else None
+        kline_amount_by_date = {}
+        for row in item.get("kline", []):
+            if len(row) >= 7:
+                kline_amount_by_date[row[0]] = row[6]
+
+        last5 = item.get("last5", [])
+        for row in last5:
+            amount = row.get("amount")
+            if amount in (None, "", "NaN") or (isinstance(amount, float) and amount != amount):
+                row["amount"] = kline_amount_by_date.get(row.get("date"), 0)
+
+        if not item.get("todayAmount") and last5:
+            item["todayAmount"] = last5[-1].get("amount", 0)
+    return dataset
+
+
+def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
+    for item in rows:
+        code = item.get("code", "")
+        industry = item.get("industry") or fetch_industry(code) or ""
+        existing_main_business = (item.get("mainBusiness") or "").strip()
+        if existing_main_business == "-":
+            existing_main_business = ""
+        latest_news = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
+        news_hint = infer_main_business_from_text(
+            " ".join(
+                [
+                    latest_news.get("title", ""),
+                    latest_news.get("summary", ""),
+                ]
+            )
+        )
+        item["mainBusiness"] = (
+            MAIN_BUSINESS_MAP.get(code)
+            or existing_main_business
+            or industry
+            or news_hint
+            or "-"
+        )
+        item["latestNews"] = latest_news
+        item["research"] = build_research_payload(code, item.get("research", {}))
+        item["marginFinancing"] = item.get("marginFinancing") or {
+            "date": "",
+            "finBalance": None,
+            "loanBalance": None,
+            "finBuyAmount": None,
+        }
+        item["topHolders"] = item.get("topHolders") or {"reportDate": "", "totalRatio": None, "holders": []}
+        item["businessSegments"] = item.get("businessSegments") or {"reportDate": "", "category": "", "items": []}
+        item["topCustomers"] = item.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
+        item["kline"] = item.get("kline") or []
+        item["last5"] = item.get("last5") or []
+    return rows
+
+
+def merge_strong_stock_rows(primary: list[dict], secondary: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for row in secondary + primary:
+        code = row.get("code")
+        if not code:
+            continue
+        existing = merged.get(code)
+        if not existing:
+            merged[code] = dict(row)
+            continue
+        combined = dict(existing)
+        combined.update({k: v for k, v in row.items() if v not in (None, "", [], {})})
+        if (row.get("todayAmount") or 0) > (existing.get("todayAmount") or 0):
+            combined["todayAmount"] = row.get("todayAmount")
+        if (row.get("totalMarketCap") or 0) > (existing.get("totalMarketCap") or 0):
+            combined["totalMarketCap"] = row.get("totalMarketCap")
+        if (row.get("floatMarketCap") or 0) > (existing.get("floatMarketCap") or 0):
+            combined["floatMarketCap"] = row.get("floatMarketCap")
+        merged[code] = combined
+    return list(merged.values())
+
+
+def backfill_market_caps(rows: list[dict]) -> list[dict]:
+    for item in rows:
+        total_cap = float(item.get("totalMarketCap") or 0.0)
+        float_cap = float(item.get("floatMarketCap") or 0.0)
+        if total_cap <= 0 and float_cap > 0:
+            item["totalMarketCap"] = float_cap
+    return rows
+
+
+def sort_watchlist_dataset(dataset: list[dict]) -> list[dict]:
+    return sorted(dataset, key=lambda item: float(item.get("floatMarketCap") or 0), reverse=True)
+
+
+def supplement_strong_stocks_from_watchlist(dataset: list[dict], strong_stocks: list[dict]) -> list[dict]:
+    if strong_stocks:
+        return strong_stocks
+    watch_codes = {row["code"] for row in dataset}
+    supplemental: list[dict] = []
+    for item in backfill_market_caps(dataset):
+        row = dict(item)
+        row["latestNews"] = row.get("latestNews") or {"time": "", "summary": "", "title": "", "link": "", "isRecent": False}
+        if strong_stock_passes_final_filters(row):
+            supplemental.append(row)
+    return finalize_strong_stocks(supplemental, watch_codes)
+
+
+def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
+    out_dir = OUT_DIR
+    prev_date = as_of - timedelta(days=1)
+    prev_watch_path = out_dir / f"watchlist_dashboard_{prev_date.isoformat()}.json"
+    if prev_watch_path.exists():
+        prev_watch = json.loads(prev_watch_path.read_text(encoding="utf-8"))
+    else:
+        prev_watch = build_dataset()
+
+    access_token = get_access_token()
+    watch_codes = [row["code"] for row in prev_watch]
+    history_map = fetch_history(access_token, watch_codes)
+    basic_map = fetch_basic(access_token, watch_codes)
+    realtime_map = fetch_realtime_map(access_token, watch_codes, as_of)
+    pe_map = fetch_pe_ratios(access_token, watch_codes)
+    margin_map = fetch_margin_financing_map(watch_codes)
+
+    watch = []
+    for item in prev_watch:
+        row = dict(item)
+        code = row["code"]
+        history = history_map.get(code)
+        basic = basic_map.get(code, {})
+        realtime = realtime_map.get(code) or {}
+        if history:
+            table = history.get("table") or {}
+            times = (history.get("time") or [])[-30:]
+            open_list = (table.get("open") or [])[-30:]
+            high_list = (table.get("high") or [])[-30:]
+            low_list = (table.get("low") or [])[-30:]
+            close_list = (table.get("close") or [])[-30:]
+            volume_list = (table.get("volume") or [])[-30:]
+            amount_list = (table.get("amount") or [])[-30:]
+            if times and close_list and len(times) == len(close_list):
+                close_field = basic.get("ths_close_price_stock") or []
+                total_field = basic.get("ths_total_shares_stock") or []
+                float_field = basic.get("ths_free_float_shares_stock") or []
+                latest_close = float((close_field[0] if close_field else close_list[-1]) or close_list[-1])
+                total_shares = float((total_field[0] if total_field else 0) or 0)
+                free_float_shares = float((float_field[0] if float_field else 0) or 0)
+                row["latestClose"] = latest_close
+                row["todayVolume"] = volume_list[-1]
+                row["todayAmount"] = amount_list[-1]
+                row["turnoverRate"] = (volume_list[-1] / free_float_shares * 100.0) if free_float_shares else None
+                row["todayPct"] = None if len(close_list) < 2 or not close_list[-2] else (close_list[-1] / close_list[-2] - 1.0) * 100.0
+                row["totalMarketCap"] = total_shares * latest_close
+                row["floatMarketCap"] = free_float_shares * latest_close
+                row["kline"] = [
+                    [times[i], open_list[i], close_list[i], low_list[i], high_list[i], volume_list[i], amount_list[i]]
+                    for i in range(len(times))
+                ]
+                prev = None
+                last5 = []
+                for i in range(max(0, len(times) - 5), len(times)):
+                    pct = None if prev is None else (close_list[i] / prev - 1.0) * 100.0
+                    last5.append(
+                        {
+                            "date": times[i],
+                            "close": close_list[i],
+                            "volume": volume_list[i],
+                            "amount": amount_list[i],
+                            "pct": pct,
+                        }
+                    )
+                    prev = close_list[i]
+                row["last5"] = last5
+        close_field = basic.get("ths_close_price_stock") or []
+        total_field = basic.get("ths_total_shares_stock") or []
+        float_field = basic.get("ths_free_float_shares_stock") or []
+        rt_latest = float(((realtime.get("latest") or [0])[-1]) or 0) if realtime.get("latest") else None
+        rt_volume_hands = float(((realtime.get("volume") or [0])[-1]) or 0) if realtime.get("volume") else 0.0
+        rt_amount = float(((realtime.get("amount") or [0])[-1]) or 0) if realtime.get("amount") else 0.0
+        rt_pct = to_float(((realtime.get("changeRatio") or [None])[-1])) if realtime.get("changeRatio") else None
+        total_shares = float((total_field[0] if total_field else 0) or 0)
+        free_float_shares = float((float_field[0] if float_field else 0) or 0)
+        latest_close = float((close_field[0] if close_field else 0) or 0)
+        if rt_latest:
+            latest_close = rt_latest
+            row["latestClose"] = latest_close
+        if rt_amount:
+            row["todayAmount"] = rt_amount
+        if rt_pct is not None:
+            row["todayPct"] = rt_pct
+        if rt_volume_hands:
+            row["todayVolume"] = rt_volume_hands * 100.0
+        if free_float_shares and rt_volume_hands:
+            row["turnoverRate"] = rt_volume_hands * 100.0 / free_float_shares * 100.0
+        if total_shares and latest_close:
+            row["totalMarketCap"] = total_shares * latest_close
+        if free_float_shares and latest_close:
+            row["floatMarketCap"] = free_float_shares * latest_close
+        fallback_total_cap = fetch_total_market_cap(code)
+        if fallback_total_cap:
+            row["totalMarketCap"] = fallback_total_cap
+        elif row.get("floatMarketCap"):
+            row["totalMarketCap"] = row["floatMarketCap"]
+        row["peRatio"] = pe_map.get(code)
+        row["marginFinancing"] = margin_map.get(code, {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None})
+        watch.append(row)
+    watch = sort_watchlist_dataset(backfill_market_caps(watch))
+
+    resolved_trade_date, candidates = resolve_strong_stock_candidates(as_of)
+    strong_codes = [row["code"] for row in candidates]
+    strong = []
+    if strong_codes:
+        history_map = fetch_history(access_token, strong_codes)
+        basic_map = fetch_basic(access_token, strong_codes)
+        prev_strong_path = out_dir / f"watchlist_strong_stocks_{resolved_trade_date.isoformat()}.json"
+        prev_strong_map = {}
+        if prev_strong_path.exists():
+            prev_strong_map = {row["code"]: row for row in json.loads(prev_strong_path.read_text(encoding="utf-8"))}
+        news_map = fetch_latest_news_map([(row["name"], row["code"]) for row in candidates])
+
+        for candidate in candidates:
+            code = candidate["code"]
+            history = history_map.get(code)
+            table = (history or {}).get("table") or {}
+            times = ((history or {}).get("time") or [])[-30:]
+            open_list = (table.get("open") or [])[-30:]
+            high_list = (table.get("high") or [])[-30:]
+            low_list = (table.get("low") or [])[-30:]
+            close_list = (table.get("close") or [])[-30:]
+            volume_list = (table.get("volume") or [])[-30:]
+            amount_list = (table.get("amount") or [])[-30:]
+            basic = basic_map.get(code, {})
+            close_field = basic.get("ths_close_price_stock") or []
+            total_field = basic.get("ths_total_shares_stock") or []
+            float_field = basic.get("ths_free_float_shares_stock") or []
+            snap = fetch_quote_snapshot(code)
+            latest_close = float(
+                (close_field[0] if close_field else None)
+                or (close_list[-1] if close_list else None)
+                or snap.get("latestClose")
+                or 0.0
+            )
+            total_shares = float((total_field[0] if total_field else 0) or 0)
+            free_float_shares = float((float_field[0] if float_field else 0) or 0)
+            total_cap = total_shares * latest_close if total_shares else (snap.get("totalMarketCap") or 0.0)
+            float_cap = free_float_shares * latest_close if free_float_shares else (snap.get("floatMarketCap") or 0.0)
+            if total_cap <= 0 and float_cap > 0:
+                total_cap = float_cap
+            today_amount = amount_list[-1] if amount_list else (snap.get("todayAmount") or 0.0)
+            turnover_rate = (
+                (volume_list[-1] / free_float_shares * 100.0) if volume_list and free_float_shares else snap.get("turnoverRate")
+            )
+            prev_row = prev_strong_map.get(code, {})
+            industry = prev_row.get("industry") or fetch_industry(code) or ""
+            row = {
+                "code": code,
+                "name": candidate["name"],
+                "industry": industry,
+                "mainBusiness": MAIN_BUSINESS_MAP.get(code) or prev_row.get("mainBusiness") or industry or "-",
+                "latestClose": latest_close,
+                "totalMarketCap": total_cap,
+                "floatMarketCap": float_cap,
+                "todayAmount": today_amount,
+                "turnoverRate": turnover_rate,
+                "todayPct": candidate["todayPct"],
+                "latestNews": news_map.get(code) or prev_row.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""},
+                "research": empty_research_payload(),
+                "peRatio": None,
+                "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
+                "topHolders": {"reportDate": "", "totalRatio": None, "holders": []},
+                "businessSegments": {"reportDate": "", "category": "", "items": []},
+                "topCustomers": {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []},
+                "kline": [
+                    [times[i], open_list[i], close_list[i], low_list[i], high_list[i], volume_list[i], amount_list[i]]
+                    for i in range(len(times))
+                ] if times and close_list and len(times) == len(close_list) else [],
+                "last5": [],
+            }
+            if not matches_mainline_business(row.get("mainBusiness")):
+                hint = infer_main_business_from_text(
+                    " ".join(
+                        [
+                            row["latestNews"].get("title", ""),
+                            row["latestNews"].get("summary", ""),
+                        ]
+                    )
+                )
+                if hint:
+                    row["mainBusiness"] = hint
+            if strong_stock_passes_final_filters(row):
+                strong.append(row)
+    strong = finalize_strong_stocks(strong, {row["code"] for row in watch})
+    strong = supplement_strong_stocks_from_watchlist(watch, strong)
+    market_overview = fetch_market_overview(access_token)
+    institution_holdings = fetch_institution_holdings(access_token)
+
+    json_path = out_dir / f"watchlist_dashboard_{as_of.isoformat()}.json"
+    strong_json_path = out_dir / f"watchlist_strong_stocks_{as_of.isoformat()}.json"
+    institution_json_path = out_dir / f"institution_holdings_{as_of.isoformat()}.json"
+    html_path = out_dir / f"watchlist_dashboard_{as_of.isoformat()}.html"
+    json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
+    strong_json_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
+    institution_json_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
+    html_path.write_text(build_html(watch, strong, market_overview, institution_holdings), encoding="utf-8")
+    return html_path, json_path, strong_json_path
+
+
+def main() -> int:
+    json_path = OUT_DIR / f"watchlist_dashboard_{AS_OF.isoformat()}.json"
+    strong_json_path = OUT_DIR / f"watchlist_strong_stocks_{AS_OF.isoformat()}.json"
+    access_token = None
+    try:
+        dataset = build_dataset()
+    except Exception:
+        if not json_path.exists():
+            raise
+        dataset = json.loads(json_path.read_text(encoding="utf-8"))
+        dataset = hydrate_cached_dataset(dataset)
+
+    dataset = sort_watchlist_dataset(backfill_market_caps(dataset))
+
+    try:
+        strong_stocks = fetch_strong_stocks(AS_OF)
+    except Exception:
+        if not strong_json_path.exists():
+            raise
+        strong_stocks = json.loads(strong_json_path.read_text(encoding="utf-8"))
+        strong_stocks = hydrate_cached_strong_stocks(strong_stocks)
+    else:
+        try:
+            access_token = get_access_token()
+            ifind_strong_stocks = fetch_strong_stocks_via_ifind(access_token, AS_OF)
+            strong_stocks = merge_strong_stock_rows(ifind_strong_stocks, strong_stocks)
+            strong_stocks = enrich_strong_stocks_for_modal(access_token, strong_stocks)
+        except Exception:
+            strong_stocks = hydrate_cached_strong_stocks(strong_stocks)
+
+    all_news_targets: list[tuple[str, str]] = []
+    seen_codes: set[str] = set()
+    for row in dataset + strong_stocks:
+        code = row["code"]
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        all_news_targets.append((row["name"], code))
+    news_map = fetch_latest_news_map(all_news_targets)
+    for row in dataset:
+        row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
+        if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
+            news_hint = infer_main_business_from_text(
+                " ".join(
+                    [
+                        row["latestNews"].get("title", ""),
+                        row["latestNews"].get("summary", ""),
+                    ]
+                )
+            )
+            if news_hint:
+                row["mainBusiness"] = news_hint
+    for row in strong_stocks:
+        row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
+        if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
+            news_hint = infer_main_business_from_text(
+                " ".join(
+                    [
+                        row["latestNews"].get("title", ""),
+                        row["latestNews"].get("summary", ""),
+                    ]
+                )
+            )
+            row["mainBusiness"] = news_hint or row.get("mainBusiness") or "-"
+
+    strong_stocks = backfill_market_caps(strong_stocks)
+    strong_stocks = finalize_strong_stocks(strong_stocks, {row["code"] for row in dataset})
+    strong_stocks = supplement_strong_stocks_from_watchlist(dataset, strong_stocks)
+    if access_token is None:
+        try:
+            access_token = get_access_token()
+        except Exception:
+            access_token = None
+    market_overview = fetch_market_overview(access_token)
+    institution_holdings = fetch_institution_holdings(access_token)
+
+    json_path.write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
+    strong_json_path.write_text(json.dumps(strong_stocks, ensure_ascii=False, indent=2), encoding="utf-8")
+    institution_json_path = OUT_DIR / f"institution_holdings_{AS_OF.isoformat()}.json"
+    institution_json_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    html = build_html(dataset, strong_stocks, market_overview, institution_holdings)
+    html_path = OUT_DIR / f"watchlist_dashboard_{AS_OF.isoformat()}.html"
+    html_path.write_text(html, encoding="utf-8")
+
+    print(html_path)
+    print(json_path)
+    print(strong_json_path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
