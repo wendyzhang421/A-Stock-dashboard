@@ -24,15 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Shanghai
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       ASTOCK_TRUST_ENV: "0"
       ASTOCK_IFIND_REFRESH_TOKEN: ${{ secrets.ASTOCK_IFIND_REFRESH_TOKEN }}
       ASTOCK_AS_OF: ${{ github.event.inputs.as_of || '' }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
