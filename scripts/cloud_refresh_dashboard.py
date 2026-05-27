@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import traceback
 from datetime import date
 from pathlib import Path
 
@@ -25,6 +26,22 @@ def run_refresh(script_name: str, as_of: date) -> None:
 
 def load_json(path: Path) -> list[dict] | dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def latest_prior_path(reports: Path, prefix: str, suffix: str, as_of: date) -> Path | None:
+    matched: list[tuple[date, Path]] = []
+    for path in reports.glob(f"{prefix}_*{suffix}"):
+        stem = path.name.removeprefix(f"{prefix}_").removesuffix(suffix)
+        try:
+            path_date = date.fromisoformat(stem)
+        except ValueError:
+            continue
+        if path_date < as_of:
+            matched.append((path_date, path))
+    if not matched:
+        return None
+    matched.sort(key=lambda item: item[0])
+    return matched[-1][1]
 
 
 def extract_market_overview(html_path: Path) -> dict[str, object]:
@@ -116,11 +133,35 @@ def main() -> int:
     index_path = reports / "share_dashboard" / "index.html"
 
     used_public_fallback = False
+    used_cached_fallback = False
+    refresh_errors: list[str] = []
     try:
         run_refresh("refresh_ifind_20260512.py", as_of)
-    except Exception:
+    except Exception as exc:
+        refresh_errors.append(f"refresh_ifind_20260512.py: {exc}")
+        print("iFinD refresh failed; falling back to public refresh", file=sys.stderr)
+        traceback.print_exc()
         used_public_fallback = True
-        run_refresh("refresh_public_as_of.py", as_of)
+        try:
+            run_refresh("refresh_public_as_of.py", as_of)
+        except Exception as public_exc:
+            refresh_errors.append(f"refresh_public_as_of.py: {public_exc}")
+            print("Public refresh failed; falling back to cached baseline", file=sys.stderr)
+            traceback.print_exc()
+            used_cached_fallback = True
+
+    if used_cached_fallback or not json_path.exists() or not strong_path.exists():
+        prior_json = latest_prior_path(reports, "watchlist_dashboard", ".json", as_of)
+        prior_strong = latest_prior_path(reports, "watchlist_strong_stocks", ".json", as_of)
+        prior_institution = latest_prior_path(reports, "institution_holdings", ".json", as_of)
+        if not prior_json or not prior_strong:
+            raise FileNotFoundError(f"No cached baseline available before {as_of.isoformat()}")
+        watch = load_json(prior_json)
+        strong = load_json(prior_strong)
+        institution_holdings = load_json(prior_institution) if prior_institution else {"date": as_of.isoformat(), "source": "cached fallback", "rows": []}
+        json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
+        strong_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
+        institution_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
 
     access_token = None
     try:
@@ -141,6 +182,9 @@ def main() -> int:
         institution_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
 
     market_overview = d.fetch_market_overview(access_token) if access_token else extract_market_overview(html_path)
+    if not market_overview:
+        prior_html = latest_prior_path(reports, "watchlist_dashboard", ".html", as_of)
+        market_overview = extract_market_overview(prior_html) if prior_html else {}
 
     json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
     strong_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -156,6 +200,8 @@ def main() -> int:
         {
             "as_of": as_of.isoformat(),
             "used_public_fallback": used_public_fallback,
+            "used_cached_fallback": used_cached_fallback,
+            "refresh_errors": refresh_errors,
             "watch_count": len(watch),
             "watch_tail_set": tail_set,
             "strong_count": len(strong),
