@@ -175,10 +175,14 @@ def main() -> int:
     watch = d.sort_watchlist_dataset(d.backfill_market_caps(d.hydrate_cached_dataset(watch)))
     strong = patch_strong_main_business(d.hydrate_cached_strong_stocks(strong))
 
+    prior_institution = latest_prior_path(reports, "institution_holdings", ".json", as_of)
     if institution_path.exists():
         institution_holdings = load_json(institution_path)
     else:
-        institution_holdings = d.fetch_institution_holdings(access_token)
+        try:
+            institution_holdings = d.fetch_institution_holdings(access_token)
+        except Exception:
+            institution_holdings = load_json(prior_institution) if prior_institution else {"date": as_of.isoformat(), "source": "cached fallback", "rows": []}
         institution_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
 
     market_overview = d.fetch_market_overview(access_token) if access_token else extract_market_overview(html_path)

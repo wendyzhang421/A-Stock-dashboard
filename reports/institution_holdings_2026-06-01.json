@@ -1,5 +1,5 @@
 {
-  "tradeDate": "2026-05-28",
+  "tradeDate": "2026-05-29",
   "source": "天天基金 pingzhongdata / 腾讯行情名称映射",
   "ifindProbe": {
     "supportsFundQuotes": false,
@@ -14,6 +14,19 @@
       "fundScaleYi": 1999.14,
       "scaleChange": "-52.66%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 30.1,
+      "recent6mReturn": 8.71,
+      "recent3mReturn": 4.1,
+      "recent1mReturn": 1.84,
+      "institutionHolderRatio": 90.27,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 97.76,
+      "assetReportDate": "2026-03-31",
+      "managerName": "柳军",
+      "managerWorkTime": "16年又363天",
+      "managerFundSize": "3388.01亿(31只基金)",
+      "managerTenureReturn": 130.1146,
+      "managerNavDate": "2026-05-28",
       "topHoldings": [
         {
           "name": "宁德时代",
@@ -63,6 +76,19 @@
       "fundScaleYi": 685.48,
       "scaleChange": "-9.83%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 78.32,
+      "recent6mReturn": 32.39,
+      "recent3mReturn": 17.76,
+      "recent1mReturn": 17.26,
+      "institutionHolderRatio": 21.79,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.57,
+      "assetReportDate": "2026-03-31",
+      "managerName": "荣膺",
+      "managerWorkTime": "10年又207天",
+      "managerFundSize": "1397.82亿(33只基金)",
+      "managerTenureReturn": 34.9454,
+      "managerNavDate": "2026-05-28",
       "topHoldings": [
         {
           "name": "寒武纪",
@@ -81,7 +107,7 @@
           "code": "688008.SH"
         },
         {
-          "name": "中微公司",
+          "name": "DR中微公",
           "code": "688012.SH"
         },
         {
@@ -112,6 +138,19 @@
       "fundScaleYi": 510.3,
       "scaleChange": "-49.20%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 111.17,
+      "recent6mReturn": 36.42,
+      "recent3mReturn": 25.39,
+      "recent1mReturn": 14.81,
+      "institutionHolderRatio": 78.83,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.79,
+      "assetReportDate": "2026-03-31",
+      "managerName": "成曦",
+      "managerWorkTime": "10年又24天",
+      "managerFundSize": "1660.26亿(28只基金)",
+      "managerTenureReturn": 103.8869,
+      "managerNavDate": "2026-05-28",
       "topHoldings": [
         {
           "name": "宁德时代",
@@ -161,9 +200,22 @@
       "fundScaleYi": 279.96,
       "scaleChange": "10.82%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": -4.91,
+      "recent6mReturn": -9.68,
+      "recent3mReturn": -11.56,
+      "recent1mReturn": -7.33,
+      "institutionHolderRatio": 32.95,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.08,
+      "assetReportDate": "2026-03-31",
+      "managerName": "张放",
+      "managerWorkTime": "5年又121天",
+      "managerFundSize": "391.40亿(20只基金)",
+      "managerTenureReturn": -12.7884,
+      "managerNavDate": "2026-05-29",
       "topHoldings": [
         {
-          "name": "药明康德",
+          "name": "XD药明康",
           "code": "603259.SH"
         },
         {
@@ -210,6 +262,19 @@
       "fundScaleYi": 229.03,
       "scaleChange": "-9.11%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 109.33,
+      "recent6mReturn": 50.59,
+      "recent3mReturn": 27.14,
+      "recent1mReturn": 26.66,
+      "institutionHolderRatio": 10.33,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.9,
+      "assetReportDate": "2026-03-31",
+      "managerName": "赵宗庭",
+      "managerWorkTime": "9年又44天",
+      "managerFundSize": "1722.70亿(30只基金)",
+      "managerTenureReturn": 163.85,
+      "managerNavDate": "2026-05-28",
       "topHoldings": [
         {
           "name": "海光信息",
@@ -232,7 +297,7 @@
           "code": "688256.SH"
         },
         {
-          "name": "中微公司",
+          "name": "DR中微公",
           "code": "688012.SH"
         },
         {
@@ -259,6 +324,19 @@
       "fundScaleYi": 199.06,
       "scaleChange": "-1.28%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 114.16,
+      "recent6mReturn": 55.61,
+      "recent3mReturn": 28.43,
+      "recent1mReturn": 24.94,
+      "institutionHolderRatio": 32.09,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.57,
+      "assetReportDate": "2026-03-31",
+      "managerName": "黄欣",
+      "managerWorkTime": "16年又47天",
+      "managerFundSize": "337.99亿(22只基金)",
+      "managerTenureReturn": 358.96,
+      "managerNavDate": "2026-05-28",
       "topHoldings": [
         {
           "name": "寒武纪",
@@ -285,7 +363,7 @@
           "code": "688008.SH"
         },
         {
-          "name": "中微公司",
+          "name": "DR中微公",
           "code": "688012.SH"
         },
         {
@@ -308,6 +386,19 @@
       "fundScaleYi": 106.51,
       "scaleChange": "-5.34%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 66.14,
+      "recent6mReturn": 12.57,
+      "recent3mReturn": -5.11,
+      "recent1mReturn": 1.56,
+      "institutionHolderRatio": 41.3,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 98.83,
+      "assetReportDate": "2026-03-31",
+      "managerName": "李茜",
+      "managerWorkTime": "6年又207天",
+      "managerFundSize": "495.11亿(26只基金)",
+      "managerTenureReturn": 12.69,
+      "managerNavDate": "2026-05-28",
       "topHoldings": [
         {
           "name": "特变电工",
@@ -357,6 +448,19 @@
       "fundScaleYi": 94.08,
       "scaleChange": "-11.67%",
       "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 22.73,
+      "recent6mReturn": 9.56,
+      "recent3mReturn": -17.19,
+      "recent1mReturn": -6.7,
+      "institutionHolderRatio": 58.08,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.73,
+      "assetReportDate": "2026-03-31",
+      "managerName": "艾小军",
+      "managerWorkTime": "12年又139天",
+      "managerFundSize": "2109.33亿(28只基金)",
+      "managerTenureReturn": 34.73,
+      "managerNavDate": "2026-05-28",
       "topHoldings": [
         {
           "name": "中国船舶",
@@ -383,7 +487,7 @@
           "code": "002179.SZ"
         },
         {
-          "name": "XD中航沈",
+          "name": "中航沈飞",
           "code": "600760.SH"
         },
         {

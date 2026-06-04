@@ -495,6 +495,19 @@ MAIN_BUSINESS_MAP = {
     "603663.SH": "锆系材料/镁铝合金",
     "002251.SZ": "零售商超/消费复苏",
     "605289.SH": "城市照明/文旅夜游",
+    "601991.SH": "火电/绿电运营",
+    "688108.SH": "冠脉支架/医疗器械",
+    "002484.SZ": "铝电解电容/薄膜电容",
+    "601888.SH": "免税零售/旅游消费",
+    "603618.SH": "电线电缆/电力设备",
+    "600021.SH": "火电/电力运营",
+    "002081.SZ": "建筑装饰/装修工程",
+    "600869.SH": "电线电缆/储能",
+    "603011.SH": "锻压设备/机器人装备",
+    "001389.SZ": "PCB/高多层板",
+    "603938.SH": "三氯氢硅/有机硅",
+    "600693.SH": "商业零售/仓储物流",
+    "002436.SZ": "PCB/封装基板",
 }
 
 RESEARCH_FALLBACK_MAP = {
@@ -2398,6 +2411,30 @@ def fetch_market_overview(access_token: str | None) -> dict[str, object]:
             overview["indexFallCount"] = sum(1 for v in pct_values if v is not None and v < 0)
         except Exception:
             overview["indices"] = []
+    if not overview["indices"]:
+        try:
+            cards = fetch_market_index_cards_public()
+            overview["indices"] = cards
+            if cards:
+                overview["tradeDate"] = str(cards[0].get("date") or overview["tradeDate"])
+            by_name = {item["name"]: item for item in cards}
+            sh_amount = to_float((by_name.get("上证指数") or {}).get("amount"))
+            sz_amount = to_float((by_name.get("深证成指") or {}).get("amount"))
+            sh_volume = to_float((by_name.get("上证指数") or {}).get("volume"))
+            sz_volume = to_float((by_name.get("深证成指") or {}).get("volume"))
+            overview["shAmount"] = sh_amount
+            overview["szAmount"] = sz_amount
+            overview["cybAmount"] = to_float((by_name.get("创业板指") or {}).get("amount"))
+            overview["kc50Amount"] = to_float((by_name.get("科创50") or {}).get("amount"))
+            if sh_amount is not None and sz_amount is not None:
+                overview["totalAmount"] = sh_amount + sz_amount
+            if sh_volume is not None and sz_volume is not None:
+                overview["totalVolume"] = sh_volume + sz_volume
+            pct_values = [to_float(item.get("pct")) for item in cards]
+            overview["indexRiseCount"] = sum(1 for v in pct_values if v is not None and v > 0)
+            overview["indexFallCount"] = sum(1 for v in pct_values if v is not None and v < 0)
+        except Exception:
+            overview["indices"] = []
     return overview
 
 
@@ -2433,11 +2470,77 @@ def fetch_market_index_cards(access_token: str) -> list[dict[str, object]]:
     return cards
 
 
+def index_code_to_qq_symbol(code: str) -> str:
+    raw = code.split(".")[0]
+    return ("sh" if code.endswith(".SH") else "sz") + raw
+
+
+def fetch_market_index_cards_public() -> list[dict[str, object]]:
+    symbols = [index_code_to_qq_symbol(code) for _, code in MARKET_INDEXES]
+    session = build_session()
+    resp = session.get("https://qt.gtimg.cn/q=" + ",".join(symbols), timeout=20)
+    resp.raise_for_status()
+    text = resp.content.decode("gbk", errors="ignore")
+    parsed: dict[str, list[str]] = {}
+    for line in text.split(";"):
+        line = line.strip()
+        if not line.startswith("v_") or "=" not in line:
+            continue
+        left, right = line.split("=", 1)
+        symbol = left.removeprefix("v_")
+        payload = right.strip().strip('"')
+        if not payload:
+            continue
+        parsed[symbol] = payload.split("~")
+
+    cards: list[dict[str, object]] = []
+    for name, code in MARKET_INDEXES:
+        parts = parsed.get(index_code_to_qq_symbol(code)) or []
+        if len(parts) < 36:
+            continue
+        latest_close = to_float(parts[3])
+        prev_close = to_float(parts[4])
+        pct = to_float(parts[32])
+        amount = None
+        combined = parts[35].split("/") if parts[35] else []
+        if len(combined) >= 3:
+            amount = to_float(combined[2])
+        volume = to_float(parts[36])
+        timestamp = parts[30]
+        trade_date = ""
+        if len(timestamp) >= 8:
+            trade_date = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
+        if pct is None and latest_close not in (None, 0) and prev_close not in (None, 0):
+            pct = (latest_close / prev_close - 1.0) * 100.0
+        cards.append(
+            {
+                "name": name,
+                "code": code,
+                "date": trade_date,
+                "latestClose": latest_close,
+                "pct": pct,
+                "amount": amount,
+                "volume": volume,
+                "detail": INDEX_DETAIL_MAP.get(code),
+            }
+        )
+    return cards
+
+
 def extract_js_var_text(source: str, var_name: str) -> str | None:
     match = re.search(rf"var\s+{re.escape(var_name)}\s*=\s*(.*?);", source, re.S)
     if not match:
         return None
     return match.group(1).strip()
+
+
+def parse_pct_text(value: object) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).strip().rstrip("%"))
+    except Exception:
+        return None
 
 
 def fetch_stock_name_map(symbols: list[str]) -> dict[str, str]:
@@ -2546,6 +2649,48 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
             latest_scale = series[-1].get("y") if series else None
             latest_mom = series[-1].get("mom") if series else None
             latest_scale_date = categories[-1] if categories else ""
+            latest_holder_ratio = None
+            holder_date = ""
+            holder_raw = extract_js_var_text(text, "Data_holderStructure") or "{}"
+            holder_data = json.loads(holder_raw)
+            holder_series = holder_data.get("series") or []
+            holder_categories = holder_data.get("categories") or []
+            for entry in holder_series:
+                if (entry.get("name") or "").strip() == "机构持有比例":
+                    holder_values = entry.get("data") or []
+                    latest_holder_ratio = holder_values[-1] if holder_values else None
+                    holder_date = holder_categories[-1] if holder_categories else ""
+                    break
+            asset_raw = extract_js_var_text(text, "Data_assetAllocation") or "{}"
+            asset_data = json.loads(asset_raw)
+            asset_series = asset_data.get("series") or []
+            asset_categories = asset_data.get("categories") or []
+            latest_stock_ratio = None
+            for entry in asset_series:
+                if (entry.get("name") or "").strip() == "股票占净比":
+                    values = entry.get("data") or []
+                    latest_stock_ratio = values[-1] if values else None
+                    break
+            asset_date = asset_categories[-1] if asset_categories else ""
+            manager_name = ""
+            manager_work_time = ""
+            manager_fund_size = ""
+            manager_tenure_return = None
+            manager_nav_date = ""
+            manager_raw = extract_js_var_text(text, "Data_currentFundManager") or "[]"
+            manager_data = json.loads(manager_raw)
+            if manager_data:
+                manager = manager_data[0] or {}
+                manager_name = str(manager.get("name") or "").strip()
+                manager_work_time = str(manager.get("workTime") or "").strip()
+                manager_fund_size = str(manager.get("fundSize") or "").strip()
+                profit = manager.get("profit") or {}
+                manager_nav_date = str(profit.get("jzrq") or "") or str((manager.get("power") or {}).get("jzrq") or "")
+                profit_series = profit.get("series") or []
+                if profit_series:
+                    series_data = (profit_series[0] or {}).get("data") or []
+                    if series_data:
+                        manager_tenure_return = (series_data[0] or {}).get("y")
             stock_symbol_set.update(stock_codes)
             fund_snapshots.append(
                 {
@@ -2554,6 +2699,19 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
                     "fundScaleYi": latest_scale,
                     "scaleChange": latest_mom,
                     "scaleReportDate": latest_scale_date,
+                    "recent1yReturn": parse_pct_text(re.search(r'var\s+syl_1n\s*=\s*"([^"]*)"', text).group(1) if re.search(r'var\s+syl_1n\s*=\s*"([^"]*)"', text) else None),
+                    "recent6mReturn": parse_pct_text(re.search(r'var\s+syl_6y\s*=\s*"([^"]*)"', text).group(1) if re.search(r'var\s+syl_6y\s*=\s*"([^"]*)"', text) else None),
+                    "recent3mReturn": parse_pct_text(re.search(r'var\s+syl_3y\s*=\s*"([^"]*)"', text).group(1) if re.search(r'var\s+syl_3y\s*=\s*"([^"]*)"', text) else None),
+                    "recent1mReturn": parse_pct_text(re.search(r'var\s+syl_1y\s*=\s*"([^"]*)"', text).group(1) if re.search(r'var\s+syl_1y\s*=\s*"([^"]*)"', text) else None),
+                    "institutionHolderRatio": latest_holder_ratio,
+                    "holderReportDate": holder_date,
+                    "stockAllocationRatio": latest_stock_ratio,
+                    "assetReportDate": asset_date,
+                    "managerName": manager_name,
+                    "managerWorkTime": manager_work_time,
+                    "managerFundSize": manager_fund_size,
+                    "managerTenureReturn": manager_tenure_return,
+                    "managerNavDate": manager_nav_date,
                     "holdingSymbols": stock_codes[:10],
                 }
             )
@@ -2577,6 +2735,19 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
                 "fundScaleYi": item["fundScaleYi"],
                 "scaleChange": item["scaleChange"],
                 "scaleReportDate": item["scaleReportDate"],
+                "recent1yReturn": item.get("recent1yReturn"),
+                "recent6mReturn": item.get("recent6mReturn"),
+                "recent3mReturn": item.get("recent3mReturn"),
+                "recent1mReturn": item.get("recent1mReturn"),
+                "institutionHolderRatio": item.get("institutionHolderRatio"),
+                "holderReportDate": item.get("holderReportDate"),
+                "stockAllocationRatio": item.get("stockAllocationRatio"),
+                "assetReportDate": item.get("assetReportDate"),
+                "managerName": item.get("managerName"),
+                "managerWorkTime": item.get("managerWorkTime"),
+                "managerFundSize": item.get("managerFundSize"),
+                "managerTenureReturn": item.get("managerTenureReturn"),
+                "managerNavDate": item.get("managerNavDate"),
                 "topHoldings": holdings,
             }
         )
@@ -2678,6 +2849,26 @@ def build_html(
             f'<span class="holding-chip" data-code="{holding.get("code") or ""}">{holding.get("name") or "-"} <small>{holding.get("code") or ""}</small></span>'
             for holding in holdings
         )
+        perf_parts = []
+        for label, value in (
+            ("近1年", item.get("recent1yReturn")),
+            ("近6月", item.get("recent6mReturn")),
+            ("近3月", item.get("recent3mReturn")),
+            ("近1月", item.get("recent1mReturn")),
+        ):
+            perf_parts.append(f"{label} {'-' if value is None else format_pct(float(value))}")
+        manager_lines = []
+        if item.get("managerName"):
+            manager_lines.append(str(item.get("managerName")))
+        if item.get("managerWorkTime"):
+            manager_lines.append(str(item.get("managerWorkTime")))
+        if item.get("managerFundSize"):
+            manager_lines.append(f"在管 {item.get('managerFundSize')}")
+        tenure_return = item.get("managerTenureReturn")
+        if tenure_return is not None:
+            manager_lines.append(f"任期收益 {format_pct(float(tenure_return))}")
+        holder_ratio = item.get("institutionHolderRatio")
+        stock_ratio = item.get("stockAllocationRatio")
         institution_rows_html.append(
             f"""
             <tr data-institution-row="true">
@@ -2691,55 +2882,26 @@ def build_html(
               <td class="nowrap-cell">
                 {('-' if item.get('fundScaleYi') is None else f"{float(item['fundScaleYi']):,.2f}亿")}
                 <div class="news-time">披露期 {item.get('scaleReportDate') or '-'}</div>
+                <div class="news-time">{'环比 -' if item.get('scaleChange') in (None, '') else f"环比 {item.get('scaleChange')}"}</div>
+              </td>
+              <td class="nowrap-cell">
+                {'<br />'.join(perf_parts)}
+              </td>
+              <td>
+                <div>{'<br />'.join(manager_lines) or '-'}</div>
+                <div class="news-time">
+                  {'机构持有占比 -' if holder_ratio is None else f"机构持有占比 {float(holder_ratio):.2f}%"}
+                  ·
+                  {'股票仓位 -' if stock_ratio is None else f"股票仓位 {float(stock_ratio):.2f}%"}
+                </div>
+                <div class="news-time">
+                  持有人披露期 {item.get('holderReportDate') or '-'} · 资产配置披露期 {item.get('assetReportDate') or '-'}
+                </div>
               </td>
               <td>
                 <div class="holding-chip-list">{holdings_html or '<span class="holding-chip empty">暂无</span>'}</div>
               </td>
             </tr>
-            """
-        )
-    report_news_candidates = []
-    seen_report_codes: set[str] = set()
-    for item in strong_stocks + dataset:
-        code = item.get("code") or ""
-        news = item.get("latestNews") or {}
-        if not code or code in seen_report_codes:
-            continue
-        title = (news.get("title") or news.get("summary") or "").strip()
-        if not title:
-            continue
-        seen_report_codes.add(code)
-        report_news_candidates.append(
-            {
-                "name": item.get("name") or code,
-                "code": code,
-                "mainBusiness": item.get("mainBusiness") or "-",
-                "title": news.get("title") or news.get("summary") or "-",
-                "summary": news.get("summary") or "暂无摘要",
-                "time": news.get("time") or "",
-                "link": news.get("link") or "",
-            }
-        )
-        if len(report_news_candidates) >= 16:
-            break
-    report_cards_html = []
-    for item in report_news_candidates:
-        link_open = f'<a class="report-card" href="{item["link"]}" target="_blank" rel="noreferrer">' if item.get("link") else '<div class="report-card">'
-        link_close = "</a>" if item.get("link") else "</div>"
-        report_cards_html.append(
-            f"""
-            {link_open}
-              <div class="report-card-head">
-                <div>
-                  <strong>{item['name']}</strong>
-                  <span>{item['code']}</span>
-                </div>
-                <em>{item['time'] or '本地收录'}</em>
-              </div>
-              <div class="report-card-tag">{item['mainBusiness']}</div>
-              <h3>{item['title']}</h3>
-              <p>{item['summary']}</p>
-            {link_close}
             """
         )
     modal_items = dataset + strong_stocks
@@ -3362,86 +3524,86 @@ def build_html(
     .institution-table td {{
       vertical-align: top;
     }}
-    .report-grid {{
+    .report-entry-panel {{
+      margin-top: 16px;
+      padding: 16px;
+      border: 1px solid rgba(31,42,55,0.08);
+      border-radius: 22px;
+      background: rgba(255,255,255,0.76);
+    }}
+    .report-form-grid {{
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 220px 180px minmax(0, 1fr);
       gap: 12px;
-      margin-top: 16px;
+      align-items: end;
     }}
-    .report-card {{
-      display: block;
-      padding: 14px 15px;
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 18px;
-      background: rgba(255,255,255,0.74);
-      text-decoration: none;
-      color: inherit;
-    }}
-    .report-card-head {{
+    .report-field {{
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 10px;
+      flex-direction: column;
+      gap: 6px;
     }}
-    .report-card-head strong {{
-      display: block;
-      font-size: 16px;
-      letter-spacing: -0.03em;
+    .report-field.full-span {{
+      grid-column: 1 / -1;
     }}
-    .report-card-head span,
-    .report-card-head em {{
+    .report-field label {{
       font-size: 11px;
       color: var(--muted);
-      font-style: normal;
-    }}
-    .report-card-tag {{
-      display: inline-flex;
-      margin-top: 10px;
-      padding: 4px 8px;
-      border-radius: 999px;
-      background: rgba(15,118,110,0.10);
-      color: var(--accent);
-      font-size: 11px;
       font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }}
-    .report-card h3 {{
-      margin: 12px 0 6px;
-      font-size: 15px;
-      line-height: 1.35;
-      letter-spacing: -0.02em;
+    .report-input,
+    .report-textarea {{
+      width: 100%;
+      border: 1px solid rgba(31,42,55,0.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.88);
+      color: var(--ink);
+      font: inherit;
+      padding: 11px 12px;
+      outline: none;
     }}
-    .report-card p {{
-      margin: 0;
+    .report-input:focus,
+    .report-textarea:focus {{
+      border-color: rgba(15,118,110,0.36);
+      box-shadow: 0 0 0 3px rgba(15,118,110,0.10);
+    }}
+    .report-textarea {{
+      min-height: 128px;
+      resize: vertical;
+    }}
+    .report-actions {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+    }}
+    .report-action-note {{
       font-size: 12px;
-      line-height: 1.55;
-      color: #334155;
-      display: -webkit-box;
-      -webkit-line-clamp: 3;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }}
-    .report-meta-grid {{
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 16px;
-    }}
-    .report-meta-card {{
-      padding: 12px 14px;
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 18px;
-      background: rgba(255,255,255,0.72);
-    }}
-    .report-meta-card span {{
-      display: block;
-      font-size: 11px;
       color: var(--muted);
     }}
-    .report-meta-card strong {{
-      display: block;
-      margin-top: 8px;
-      font-size: 14px;
-      line-height: 1.4;
+    .report-save-button {{
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #0f766e, #0b5c56);
+      color: white;
+      padding: 10px 16px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }}
+    .report-save-button:hover {{
+      filter: brightness(1.02);
+    }}
+    .report-empty {{
+      margin-top: 12px;
+      padding: 18px 16px;
+      border: 1px dashed rgba(31,42,55,0.16);
+      border-radius: 18px;
+      color: var(--muted);
+      text-align: center;
+      background: rgba(255,255,255,0.62);
     }}
     .pct-rise {{
       color: var(--rise);
@@ -3703,11 +3865,10 @@ def build_html(
       }}
       .market-index-grid,
       .market-stat-grid,
-      .index-summary-grid,
-      .report-meta-grid {{
+      .index-summary-grid {{
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }}
-      .report-grid {{
+      .report-form-grid {{
         grid-template-columns: 1fr;
       }}
       .modal {{
@@ -3846,13 +4007,13 @@ def build_html(
         <div class="notice-banner institution-note">
           iFinD 基金能力验证：
           {"已确认支持 .OF 基金行情历史" if institution_probe.get("supportsFundQuotes") else "当前未确认 .OF 基金行情历史"}
-          。前十大重仓股与基金体量当前使用天天基金最近披露季报口径。
+          。机构页当前使用天天基金公开披露口径，可展示近1年/6月/3月/1月收益、基金规模环比、基金经理在管规模、机构持有占比和前十大重仓股。
         </div>
       </section>
       <div class="section-head">
         <div>
           <h2>重点基金持仓</h2>
-          <p>{institution_probe.get('notes') or '基金规模和前十大重仓股按最近季报披露整理'}</p>
+          <p>{institution_probe.get('notes') or '基金规模、阶段收益、管理信息和前十大重仓股按最近公开披露整理'}</p>
         </div>
         <span class="pill">共 {len(institution_rows_data)} 只</span>
       </div>
@@ -3863,6 +4024,8 @@ def build_html(
               <th>编号</th>
               <th>基金名称</th>
               <th>基金体量</th>
+              <th>阶段收益</th>
+              <th>管理信息</th>
               <th>前10大重仓股</th>
             </tr>
           </thead>
@@ -3877,39 +4040,53 @@ def build_html(
         <h1>投研报告</h1>
         <div class="meta">
           <span>更新日期：{AS_OF.isoformat()}</span>
-          <span>当前收录：{len(report_news_candidates)} 条</span>
-          <span>用途：为后续卖方/知识星球/公告研报入口预留统一视图</span>
+          <span>默认日期：{AS_OF.isoformat()}</span>
+          <span>保存方式：当前浏览器本地存储</span>
         </div>
         <div class="notice-banner institution-note">
-          这个页签先挂了独立容器。当前内容先用本地已收录的重要公告/新闻做占位，
-          后面接入卖方报告或知识星球内容时，直接往这里并即可，不再改导航结构。
+          在这里手动录入投研内容。保存后会在下方生成表格，并保存在当前浏览器本地。
         </div>
       </section>
-      <div class="report-meta-grid">
-        <article class="report-meta-card">
-          <span>当前主要来源</span>
-          <strong>本地看板已抓取公告 / 重要新闻</strong>
-        </article>
-        <article class="report-meta-card">
-          <span>基金链路状态</span>
-          <strong>{"iFinD 已确认支持基金行情；持仓仍走公开源" if institution_probe.get("supportsFundQuotes") else "当前仍以公开源为主"}</strong>
-        </article>
-        <article class="report-meta-card">
-          <span>后续接入位</span>
-          <strong>知识星球 / 卖方报告 / 手工导入摘要</strong>
-        </article>
-      </div>
+      <section class="report-entry-panel">
+        <div class="report-form-grid">
+          <div class="report-field">
+            <label for="report-target-input">标的名称</label>
+            <input id="report-target-input" class="report-input" type="text" placeholder="例如：海光信息 / 科创50" />
+          </div>
+          <div class="report-field">
+            <label for="report-date-input">日期</label>
+            <input id="report-date-input" class="report-input" type="date" value="{AS_OF.isoformat()}" />
+          </div>
+          <div class="report-field full-span">
+            <label for="report-content-input">内容</label>
+            <textarea id="report-content-input" class="report-textarea" placeholder="输入投研摘要、核心观点、会议纪要或跟踪结论"></textarea>
+          </div>
+        </div>
+        <div class="report-actions">
+          <span class="report-action-note">保存后按日期倒序展示，刷新页面后仍保留。</span>
+          <button id="report-save-button" class="report-save-button" type="button">保存到表格</button>
+        </div>
+      </section>
       <div class="section-head">
         <div>
-          <h2>本地收录</h2>
-          <p>先用今天看板里已收录的重要公告和新闻做报告池占位</p>
+          <h2>录入结果</h2>
+          <p>手动保存的投研内容会显示在这里</p>
         </div>
-        <span class="pill">共 {len(report_news_candidates)} 条</span>
+        <span class="pill" id="report-count-pill">共 0 条</span>
       </div>
       <section class="summary-table-wrap">
-        <div class="report-grid">
-          {''.join(report_cards_html) or '<div class="report-card"><h3>暂无投研内容</h3><p>当前还没有可展示的报告条目。</p></div>'}
-        </div>
+        <table class="summary-table">
+          <thead>
+            <tr>
+              <th>编号</th>
+              <th>标的名称</th>
+              <th>日期</th>
+              <th>内容</th>
+            </tr>
+          </thead>
+          <tbody id="report-table-body"></tbody>
+        </table>
+        <div class="report-empty" id="report-empty-state">当前还没有录入任何投研内容。</div>
       </section>
     </section>
     <div class="modal" id="stock-modal" aria-hidden="true">
@@ -4157,6 +4334,13 @@ def build_html(
     const modalSubtitle = document.getElementById('modal-subtitle');
     const modalChartNode = document.getElementById('modal-chart');
     const stockSearch = document.getElementById('stock-search');
+    const reportTargetInput = document.getElementById('report-target-input');
+    const reportDateInput = document.getElementById('report-date-input');
+    const reportContentInput = document.getElementById('report-content-input');
+    const reportSaveButton = document.getElementById('report-save-button');
+    const reportTableBody = document.getElementById('report-table-body');
+    const reportEmptyState = document.getElementById('report-empty-state');
+    const reportCountPill = document.getElementById('report-count-pill');
     const strongStocksTableBody = document.getElementById('strong-stocks-table-body');
     const watchlistTableBody = document.getElementById('watchlist-table-body');
     const removedPanel = document.getElementById('removed-panel');
@@ -4308,6 +4492,7 @@ def build_html(
 
     const WATCHLIST_STORAGE_KEY = 'astock_watchlist_status_v1';
     const WATCHLIST_STRONG_JOIN_KEY = 'astock_strong_join_v1';
+    const REPORT_ENTRIES_KEY = 'astock_report_entries_v1';
 
     function loadWatchlistStatus() {{
       try {{
@@ -4333,6 +4518,20 @@ def build_html(
       window.localStorage.setItem(WATCHLIST_STRONG_JOIN_KEY, JSON.stringify(statusMap));
     }}
 
+    function loadReportEntries() {{
+      try {{
+        const raw = window.localStorage.getItem(REPORT_ENTRIES_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      }} catch (error) {{
+        return [];
+      }}
+    }}
+
+    function saveReportEntries(entries) {{
+      window.localStorage.setItem(REPORT_ENTRIES_KEY, JSON.stringify(entries));
+    }}
+
     function setSelectVisualState(select) {{
       select.dataset.state = select.value;
     }}
@@ -4353,6 +4552,15 @@ def build_html(
       if (numeric > 0) return 'pct-rise';
       if (numeric < 0) return 'pct-fall';
       return 'pct-flat';
+    }}
+
+    function escapeHtml(value) {{
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
     }}
 
     const watchlistSortState = {{ field: 'floatMarketCap', direction: 'desc' }};
@@ -4574,6 +4782,25 @@ def build_html(
       renumberTableRows();
     }}
 
+    function renderReportEntries() {{
+      const entries = loadReportEntries().sort((a, b) => {{
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      }});
+      reportCountPill.textContent = `共 ${{entries.length}} 条`;
+      reportEmptyState.hidden = entries.length > 0;
+      reportTableBody.innerHTML = entries.map((entry, index) => `
+        <tr>
+          <td class="index-cell">${{index + 1}}</td>
+          <td>${{escapeHtml(entry.target)}}</td>
+          <td class="nowrap-cell">${{escapeHtml(entry.date)}}</td>
+          <td style="white-space: pre-wrap;">${{escapeHtml(entry.content)}}</td>
+        </tr>
+      `).join('');
+    }}
+
     const watchlistStatusMap = loadWatchlistStatus();
     const strongJoinMap = loadStrongJoinStatus();
 
@@ -4655,10 +4882,33 @@ def build_html(
       renumberTableRows();
     }});
 
+    reportSaveButton.addEventListener('click', () => {{
+      const target = reportTargetInput.value.trim();
+      const content = reportContentInput.value.trim();
+      const pickedDate = reportDateInput.value || '{AS_OF.isoformat()}';
+      if (!target || !content) {{
+        window.alert('请先填写标的名称和内容。');
+        return;
+      }}
+      const entries = loadReportEntries();
+      entries.push({{
+        target,
+        content,
+        date: pickedDate,
+        createdAt: Date.now()
+      }});
+      saveReportEntries(entries);
+      reportTargetInput.value = '';
+      reportContentInput.value = '';
+      reportDateInput.value = pickedDate;
+      renderReportEntries();
+    }});
+
     syncStrongSelectionsIntoWatchlist();
     syncStrongStockStatusControls();
     updateWatchlistSortIndicators();
     applyWatchlistSort();
+    renderReportEntries();
     const savedView = window.localStorage.getItem(DASHBOARD_VIEW_KEY);
     const allowedViews = new Set(['market-view', 'institution-view', 'report-view']);
     setActiveView(allowedViews.has(savedView) ? savedView : 'market-view');
