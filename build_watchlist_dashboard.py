@@ -3164,89 +3164,213 @@ def build_html(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>股票跟踪看板</title>
+  <title>Stock Killer-A Shares</title>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
   <style>
     :root {{
-      --bg: #f4efe6;
-      --paper: #fffaf2;
-      --ink: #1f2a37;
-      --muted: #6b7280;
-      --line: rgba(31, 42, 55, 0.12);
-      --accent: #0f766e;
-      --accent-soft: rgba(15, 118, 110, 0.12);
-      --rise: #d64545;
-      --fall: #1f8f67;
-      --shadow: 0 24px 60px rgba(38, 28, 18, 0.08);
+      --bg: #16222b;
+      --bg-2: #1c2b36;
+      --paper: rgba(20, 31, 40, 0.88);
+      --paper-2: rgba(16, 26, 35, 0.94);
+      --ink: #edf7f7;
+      --muted: #8ea5ae;
+      --line: rgba(83, 242, 229, 0.15);
+      --line-strong: rgba(83, 242, 229, 0.28);
+      --accent: #58e7da;
+      --accent-2: #84d9ff;
+      --accent-soft: rgba(83, 242, 229, 0.08);
+      --rise: #ff5a7d;
+      --fall: #39e6a0;
+      --warn: #ffbc64;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+      --panel-glow: 0 0 0 1px rgba(83, 242, 229, 0.06), 0 18px 40px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255,255,255,0.025);
+      --radius-panel: 2px;
+      --radius-card: 2px;
+      --radius-chip: 999px;
+      --cut-size: 14px;
+    }}
+    body[data-theme="light"] {{
+      --bg: #eef3f6;
+      --bg-2: #e3edf2;
+      --paper: rgba(250, 253, 255, 0.92);
+      --paper-2: rgba(255, 255, 255, 0.96);
+      --ink: #10212b;
+      --muted: #627786;
+      --line: rgba(11, 67, 86, 0.12);
+      --line-strong: rgba(15, 132, 151, 0.24);
+      --accent: #007f8c;
+      --accent-2: #0099d5;
+      --accent-soft: rgba(0, 127, 140, 0.08);
+      --rise: #d73d63;
+      --fall: #0e9f69;
+      --warn: #b7791f;
+      --shadow: 0 20px 50px rgba(32, 62, 81, 0.10);
+      --panel-glow: 0 0 0 1px rgba(0, 127, 140, 0.05), 0 18px 36px rgba(17, 52, 71, 0.08), inset 0 1px 0 rgba(255,255,255,0.7);
     }}
 
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(15,118,110,0.10), transparent 30%),
-        radial-gradient(circle at top right, rgba(214,69,69,0.10), transparent 22%),
-        linear-gradient(180deg, #f8f3ea 0%, var(--bg) 100%);
+        radial-gradient(circle at 12% 10%, rgba(83,242,229,0.10), transparent 24%),
+        radial-gradient(circle at 86% 16%, rgba(122,215,255,0.08), transparent 20%),
+        linear-gradient(180deg, #233642 0%, var(--bg) 56%, #121c24 100%);
+      min-height: 100vh;
+      position: relative;
+    }}
+    body[data-theme="light"] {{
+      background:
+        radial-gradient(circle at 10% 8%, rgba(0,153,213,0.08), transparent 24%),
+        radial-gradient(circle at 88% 12%, rgba(0,127,140,0.08), transparent 20%),
+        linear-gradient(180deg, #fafcfd 0%, var(--bg) 54%, #dfe8ed 100%);
+    }}
+    body::before {{
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(83,242,229,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(83,242,229,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,0.6), transparent 92%);
+      opacity: 0.28;
+    }}
+    body::after {{
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0));
+      opacity: 0.8;
     }}
     .app-shell {{
-      width: min(1600px, calc(100vw - 20px));
+      width: min(1680px, calc(100vw - 24px));
       margin: 0 auto;
-      padding: 20px 0 36px;
+      padding: 16px 0 40px;
       display: grid;
-      grid-template-columns: 188px minmax(0, 1fr);
-      gap: 18px;
+      grid-template-columns: 172px minmax(0, 1fr);
+      gap: 16px;
       align-items: start;
     }}
     .sidebar {{
       position: sticky;
-      top: 18px;
-      min-height: calc(100vh - 36px);
+      top: 12px;
+      min-height: calc(100vh - 24px);
       align-self: stretch;
       display: flex;
       flex-direction: column;
       justify-content: flex-start;
-      padding: 22px 14px;
-      border-radius: 24px;
-      background: rgba(255,250,242,0.88);
-      border: 1px solid rgba(255,255,255,0.65);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(12px);
+      padding: 18px 12px;
+      border-radius: 0;
+      background: linear-gradient(180deg, rgba(15,23,31,0.96), rgba(12,19,26,0.98));
+      border: 1px solid rgba(83,242,229,0.12);
+      box-shadow: 0 0 0 1px rgba(83,242,229,0.04), 0 18px 34px rgba(0, 0, 0, 0.18);
+      backdrop-filter: blur(10px);
+      overflow: hidden;
     }}
     .sidebar-brand strong {{
       display: block;
-      font-size: 18px;
-      letter-spacing: -0.04em;
+      font-size: 14px;
+      letter-spacing: 0.12em;
+      color: #f0fffd;
+      text-transform: uppercase;
+      line-height: 1.35;
+      text-shadow: none;
+    }}
+    body[data-theme="light"] .sidebar-brand strong {{
+      color: #0d2028;
+      text-shadow: none;
     }}
     .sidebar-brand span {{
-      display: block;
-      margin-top: 6px;
-      font-size: 11px;
-      color: var(--muted);
+      display: none;
+    }}
+    body[data-theme="light"] .sidebar {{
+      background: linear-gradient(180deg, rgba(250,252,253,0.98), rgba(241,246,249,0.98));
+      border-color: rgba(0,127,140,0.10);
+      box-shadow: 0 0 0 1px rgba(0,127,140,0.03), 0 14px 28px rgba(28, 59, 78, 0.06);
     }}
     .sidebar-nav {{
-      margin-top: 22px;
+      position: relative;
+      margin-top: 18px;
       display: grid;
-      gap: 8px;
+      gap: 6px;
       align-content: start;
+    }}
+    .theme-toggle {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .theme-toggle button {{
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.02);
+      color: var(--muted);
+      border-radius: 999px;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: 180ms ease;
+    }}
+    .theme-toggle button.active {{
+      color: var(--ink);
+      background: linear-gradient(135deg, var(--accent-soft), rgba(255,255,255,0.02));
+      border-color: var(--line-strong);
+    }}
+    .theme-toggle svg {{
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }}
     .sidebar-link {{
       width: 100%;
       text-align: left;
-      border: 1px solid rgba(31,42,55,0.08);
-      background: rgba(255,255,255,0.72);
-      color: #334155;
-      border-radius: 14px;
-      padding: 10px 12px;
-      font-size: 13px;
+      border: 1px solid transparent;
+      border-left: 2px solid transparent;
+      background: transparent;
+      color: #9eb4bb;
+      border-radius: 0;
+      padding: 10px 10px 10px 12px;
+      font-size: 12px;
       font-weight: 700;
       cursor: pointer;
+      letter-spacing: 0.10em;
+      transition: 180ms ease;
+      text-transform: uppercase;
     }}
     .sidebar-link.active {{
-      color: var(--accent);
-      border-color: rgba(15,118,110,0.18);
-      background: rgba(15,118,110,0.10);
+      color: #efffff;
+      border-color: rgba(83,242,229,0.10);
+      border-left-color: var(--accent);
+      background: rgba(83,242,229,0.06);
+      box-shadow: inset 0 0 0 1px rgba(83,242,229,0.04);
+    }}
+    .sidebar-link:hover {{
+      color: #e8ffff;
+      border-left-color: rgba(83,242,229,0.42);
+      background: rgba(83,242,229,0.03);
+    }}
+    body[data-theme="light"] .sidebar-link {{
+      color: #3e5663;
+      background: transparent;
+      border-left-color: transparent;
+    }}
+    body[data-theme="light"] .sidebar-link.active {{
+      color: #07202a;
+      background: rgba(0,127,140,0.06);
+      border-color: rgba(0,127,140,0.08);
+      border-left-color: var(--accent);
+      box-shadow: inset 0 0 0 1px rgba(0,127,140,0.03);
     }}
     .wrap {{
       width: 100%;
@@ -3257,29 +3381,63 @@ def build_html(
       display: none !important;
     }}
     .hero {{
-      padding: 20px 22px;
-      background: rgba(255,250,242,0.88);
-      border: 1px solid rgba(255,255,255,0.65);
-      border-radius: 28px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(12px);
+      position: relative;
+      padding: 22px 24px;
+      background:
+        radial-gradient(circle at top right, rgba(83,242,229,0.14), transparent 24%),
+        linear-gradient(180deg, rgba(11,21,31,0.96), rgba(8,15,24,0.98));
+      border: 1px solid var(--line);
+      border-radius: var(--radius-panel);
+      box-shadow: var(--panel-glow);
+      backdrop-filter: blur(14px);
+      overflow: hidden;
+      clip-path: polygon(0 0, calc(100% - var(--cut-size)) 0, 100% var(--cut-size), 100% 100%, var(--cut-size) 100%, 0 calc(100% - var(--cut-size)));
+    }}
+    body[data-theme="light"] .hero {{
+      background:
+        radial-gradient(circle at top right, rgba(0,153,213,0.10), transparent 24%),
+        linear-gradient(180deg, rgba(250,253,255,0.98), rgba(242,248,251,0.98));
+    }}
+    .hero::after {{
+      content: "";
+      position: absolute;
+      left: 24px;
+      right: 24px;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(83,242,229,0.36), transparent);
     }}
     .notice-banner {{
       margin-top: 12px;
-      border: 1px solid rgba(180,83,9,0.24);
-      background: linear-gradient(135deg, rgba(255,247,237,0.95), rgba(255,251,235,0.92));
-      color: #9a3412;
-      border-radius: 16px;
+      border: 1px solid rgba(255,188,100,0.28);
+      background: linear-gradient(135deg, rgba(64,36,10,0.66), rgba(27,20,8,0.72));
+      color: #ffcf8f;
+      border-radius: 8px;
       padding: 12px 14px;
       font-size: 13px;
       line-height: 1.5;
-      box-shadow: 0 10px 24px rgba(180,83,9,0.08);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.18);
     }}
     .hero h1 {{
       margin: 0;
-      font-size: clamp(22px, 3vw, 34px);
-      line-height: 1.04;
-      letter-spacing: -0.04em;
+      font-size: clamp(24px, 3vw, 38px);
+      line-height: 1;
+      letter-spacing: -0.05em;
+      color: #f3ffff;
+      text-shadow: 0 0 30px rgba(83,242,229,0.12);
+    }}
+    body[data-theme="light"] .hero h1 {{
+      color: #0d2028;
+      text-shadow: none;
+    }}
+    .hero-actions {{
+      position: absolute;
+      top: 16px;
+      right: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 2;
     }}
     .search-bar {{
       margin-top: 12px;
@@ -3287,15 +3445,23 @@ def build_html(
       align-items: center;
       gap: 10px;
       max-width: 560px;
-      padding: 10px 14px;
-      border-radius: 18px;
-      border: 1px solid rgba(31,42,55,0.10);
-      background: rgba(255,255,255,0.78);
+      padding: 11px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(83,242,229,0.14);
+      background: rgba(5, 13, 20, 0.88);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+    }}
+    body[data-theme="light"] .search-bar {{
+      background: rgba(255,255,255,0.86);
+      border-color: rgba(0,127,140,0.14);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.75);
     }}
     .search-bar span {{
       font-size: 11px;
       color: var(--muted);
       white-space: nowrap;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
     }}
     .search-input {{
       width: 100%;
@@ -3307,7 +3473,7 @@ def build_html(
       font-weight: 600;
     }}
     .search-input::placeholder {{
-      color: #94a3b8;
+      color: #597380;
       font-weight: 500;
     }}
     .meta {{
@@ -3320,16 +3486,23 @@ def build_html(
       display: inline-flex;
       align-items: center;
       border-radius: 999px;
-      padding: 6px 10px;
-      background: var(--accent-soft);
-      color: var(--accent);
+      padding: 6px 11px;
+      background: rgba(83,242,229,0.08);
+      color: #9dfaf0;
       font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.02em;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      border: 1px solid rgba(83,242,229,0.12);
+    }}
+    body[data-theme="light"] .meta span,
+    body[data-theme="light"] .pill {{
+      background: rgba(0,127,140,0.06);
+      color: #0b6671;
+      border-color: rgba(0,127,140,0.10);
     }}
     .market-overview {{
       margin-top: 16px;
-      padding: 14px;
+      padding: 16px;
     }}
     .market-overview-head {{
       display: flex;
@@ -3343,6 +3516,13 @@ def build_html(
       font-size: 16px;
       line-height: 1.1;
       letter-spacing: -0.03em;
+      color: #efffff;
+    }}
+    body[data-theme="light"] .market-overview-head h2,
+    body[data-theme="light"] .section-head h2,
+    body[data-theme="light"] .modal-head h3,
+    body[data-theme="light"] .index-modal-head h3 {{
+      color: #10212b;
     }}
     .market-overview-head p {{
       margin: 4px 0 0;
@@ -3355,9 +3535,26 @@ def build_html(
       gap: 10px;
     }}
     .market-card {{
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 18px;
-      background: rgba(255,255,255,0.72);
+      border: 1px solid rgba(83,242,229,0.10);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(13,24,35,0.92), rgba(8,17,25,0.96));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+      clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+    }}
+    body[data-theme="light"] .market-card,
+    body[data-theme="light"] .market-stat,
+    body[data-theme="light"] .summary-table-wrap,
+    body[data-theme="light"] .panel,
+    body[data-theme="light"] .report-entry-panel,
+    body[data-theme="light"] .removed-item,
+    body[data-theme="light"] .index-summary-item,
+    body[data-theme="light"] .index-leader-item,
+    body[data-theme="light"] .research-panel,
+    body[data-theme="light"] .chart-insights .research-section,
+    body[data-theme="light"] .research-metric,
+    body[data-theme="light"] .index-modal-card,
+    body[data-theme="light"] .modal-card {{
+      background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(245,249,251,0.98));
     }}
     .market-card-button {{
       width: 100%;
@@ -3380,15 +3577,24 @@ def build_html(
       color: var(--muted);
     }}
     .market-card-head strong {{
-      color: var(--ink);
+      color: #f1ffff;
       font-size: 13px;
       letter-spacing: -0.02em;
     }}
     .market-card-price {{
       margin-top: 10px;
-      font-size: 24px;
-      font-weight: 700;
+      font-size: 28px;
+      font-weight: 800;
       letter-spacing: -0.04em;
+      color: #f7ffff;
+    }}
+    body[data-theme="light"] .market-card-head strong,
+    body[data-theme="light"] .market-card-price,
+    body[data-theme="light"] .market-stat strong,
+    body[data-theme="light"] .index-summary-item strong,
+    body[data-theme="light"] .index-leader-item strong,
+    body[data-theme="light"] .research-metric strong {{
+      color: #0f2230;
     }}
     .market-card-price-row {{
       display: flex;
@@ -3396,7 +3602,7 @@ def build_html(
       gap: 8px;
     }}
     .market-card-pct {{
-      font-size: 16px;
+      font-size: 18px;
       font-weight: 800;
       letter-spacing: -0.03em;
     }}
@@ -3417,9 +3623,10 @@ def build_html(
     }}
     .market-stat {{
       padding: 12px 14px;
-      border: 1px solid rgba(31,42,55,0.08);
+      border: 1px solid rgba(83,242,229,0.10);
       border-radius: 18px;
-      background: rgba(255,255,255,0.72);
+      background: linear-gradient(180deg, rgba(12,23,34,0.92), rgba(8,16,25,0.96));
+      clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
     }}
     .market-stat span {{
       display: block;
@@ -3429,8 +3636,9 @@ def build_html(
     .market-stat strong {{
       display: block;
       margin-top: 8px;
-      font-size: 18px;
+      font-size: 20px;
       letter-spacing: -0.03em;
+      color: #f2fffe;
     }}
     .index-modal {{
       position: fixed;
@@ -3450,11 +3658,12 @@ def build_html(
       width: min(720px, calc(100vw - 24px));
       max-height: min(90vh, 840px);
       overflow: auto;
-      background: var(--paper);
+      background: var(--paper-2);
       border: 1px solid var(--line);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
+      border-radius: var(--radius-panel);
+      box-shadow: var(--panel-glow);
       padding: 16px;
+      clip-path: polygon(0 0, calc(100% - var(--cut-size)) 0, 100% var(--cut-size), 100% 100%, var(--cut-size) 100%, 0 calc(100% - var(--cut-size)));
     }}
     .index-modal-head {{
       display: flex;
@@ -3482,9 +3691,10 @@ def build_html(
     .index-summary-item,
     .index-leader-item {{
       padding: 12px 14px;
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 16px;
-      background: rgba(255,255,255,0.74);
+      border: 1px solid rgba(83,242,229,0.10);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(12,23,35,0.92), rgba(8,17,25,0.96));
+      clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
     }}
     .index-summary-item span,
     .index-leader-item span {{
@@ -3513,14 +3723,15 @@ def build_html(
       margin-top: 8px;
       font-style: normal;
       font-size: 12px;
-      color: #334155;
+      color: #aac3ca;
       line-height: 1.45;
     }}
     .summary-table-wrap, .panel {{
       background: var(--paper);
       border: 1px solid var(--line);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
+      border-radius: var(--radius-panel);
+      box-shadow: var(--panel-glow);
+      clip-path: polygon(0 0, calc(100% - var(--cut-size)) 0, 100% var(--cut-size), 100% 100%, var(--cut-size) 100%, 0 calc(100% - var(--cut-size)));
     }}
     .summary-table-wrap {{
       margin-top: 16px;
@@ -3530,9 +3741,9 @@ def build_html(
     .removed-panel {{
       margin-top: 12px;
       padding: 10px 12px 12px;
-      background: rgba(255,250,242,0.74);
-      border: 1px dashed rgba(31,42,55,0.16);
-      border-radius: 18px;
+      background: rgba(38, 23, 10, 0.36);
+      border: 1px dashed rgba(255,188,100,0.22);
+      border-radius: 8px;
     }}
     .removed-panel[hidden] {{
       display: none;
@@ -3560,9 +3771,10 @@ def build_html(
       align-items: center;
       gap: 8px;
       padding: 8px 10px;
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 12px;
-      background: rgba(255,255,255,0.76);
+      border: 1px solid rgba(83,242,229,0.10);
+      border-radius: 6px;
+      background: rgba(10,19,29,0.86);
+      clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
     }}
     .removed-info {{
       display: flex;
@@ -3603,7 +3815,7 @@ def build_html(
     .summary-table td {{
       padding: 10px 12px;
       text-align: left;
-      border-bottom: 1px solid rgba(31,42,55,0.08);
+      border-bottom: 1px solid rgba(83,242,229,0.08);
       vertical-align: middle;
     }}
     .index-cell {{
@@ -3621,6 +3833,11 @@ def build_html(
       font-weight: 600;
       letter-spacing: 0.04em;
       text-transform: uppercase;
+      background: rgba(83,242,229,0.02);
+    }}
+    body[data-theme="light"] .summary-table th {{
+      background: rgba(0,127,140,0.03);
+      color: #67808e;
     }}
     .sort-button {{
       display: inline-flex;
@@ -3651,7 +3868,7 @@ def build_html(
       border-bottom: none;
     }}
     .summary-table tbody tr:hover {{
-      background: rgba(15,118,110,0.05);
+      background: rgba(83,242,229,0.06);
     }}
     .summary-table tbody tr[data-watchlist-row="true"] {{
       cursor: pointer;
@@ -3667,11 +3884,12 @@ def build_html(
       gap: 4px;
       border-radius: 999px;
       padding: 5px 9px;
-      background: rgba(31,42,55,0.06);
-      color: #334155;
+      background: rgba(83,242,229,0.08);
+      color: #d8f7f4;
       font-size: 11px;
       line-height: 1.2;
       white-space: nowrap;
+      border: 1px solid rgba(83,242,229,0.10);
     }}
     .holding-chip small {{
       color: var(--muted);
@@ -3689,9 +3907,10 @@ def build_html(
     .report-entry-panel {{
       margin-top: 16px;
       padding: 16px;
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 22px;
-      background: rgba(255,255,255,0.76);
+      border: 1px solid rgba(83,242,229,0.10);
+      border-radius: var(--radius-panel);
+      background: linear-gradient(180deg, rgba(11,22,32,0.94), rgba(8,16,25,0.98));
+      clip-path: polygon(0 0, calc(100% - var(--cut-size)) 0, 100% var(--cut-size), 100% 100%, var(--cut-size) 100%, 0 calc(100% - var(--cut-size)));
     }}
     .report-form-grid {{
       display: grid;
@@ -3711,19 +3930,26 @@ def build_html(
       font-size: 11px;
       color: var(--muted);
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.10em;
       text-transform: uppercase;
     }}
     .report-input,
     .report-textarea {{
       width: 100%;
-      border: 1px solid rgba(31,42,55,0.12);
-      border-radius: 14px;
-      background: rgba(255,255,255,0.88);
+      border: 1px solid rgba(83,242,229,0.12);
+      border-radius: 6px;
+      background: rgba(4,12,19,0.92);
       color: var(--ink);
       font: inherit;
       padding: 11px 12px;
       outline: none;
+      color-scheme: dark;
+    }}
+    body[data-theme="light"] .report-input,
+    body[data-theme="light"] .report-textarea {{
+      background: rgba(255,255,255,0.94);
+      color: #10212b;
+      color-scheme: light;
     }}
     .report-input:focus,
     .report-textarea:focus {{
@@ -3747,13 +3973,14 @@ def build_html(
     }}
     .report-save-button {{
       border: none;
-      border-radius: 999px;
-      background: linear-gradient(135deg, #0f766e, #0b5c56);
-      color: white;
+      border-radius: var(--radius-chip);
+      background: linear-gradient(135deg, #53f2e5, #1ec8ff);
+      color: #041017;
       padding: 10px 16px;
       font-size: 12px;
       font-weight: 700;
       cursor: pointer;
+      box-shadow: 0 10px 24px rgba(83,242,229,0.16);
     }}
     .report-save-button:hover {{
       filter: brightness(1.02);
@@ -3777,11 +4004,11 @@ def build_html(
     .report-empty {{
       margin-top: 12px;
       padding: 18px 16px;
-      border: 1px dashed rgba(31,42,55,0.16);
-      border-radius: 18px;
+      border: 1px dashed rgba(83,242,229,0.18);
+      border-radius: 8px;
       color: var(--muted);
       text-align: center;
-      background: rgba(255,255,255,0.62);
+      background: rgba(10,19,29,0.72);
     }}
     .pct-rise {{
       color: var(--rise);
@@ -3817,17 +4044,21 @@ def build_html(
       letter-spacing: -0.03em;
       line-height: 1.15;
     }}
+    body[data-theme="light"] .stock-name {{
+      color: #10212b;
+    }}
     .stock-code {{
       margin-top: 3px;
       color: var(--muted);
       font-size: 11px;
+      letter-spacing: 0.06em;
     }}
     .status-select {{
       min-width: 88px;
-      border: 1px solid rgba(15,118,110,0.16);
-      background: rgba(15,118,110,0.08);
-      color: var(--accent);
-      border-radius: 10px;
+      border: 1px solid rgba(83,242,229,0.16);
+      background: rgba(83,242,229,0.08);
+      color: #b5fffa;
+      border-radius: 6px;
       padding: 6px 24px 6px 10px;
       font-size: 11px;
       font-weight: 700;
@@ -3835,10 +4066,10 @@ def build_html(
     }}
     .join-watchlist-select {{
       min-width: 96px;
-      border: 1px solid rgba(15,118,110,0.16);
-      background: rgba(15,118,110,0.08);
-      color: var(--accent);
-      border-radius: 10px;
+      border: 1px solid rgba(83,242,229,0.16);
+      background: rgba(83,242,229,0.08);
+      color: #b5fffa;
+      border-radius: 6px;
       padding: 6px 24px 6px 10px;
       font-size: 11px;
       font-weight: 700;
@@ -3891,7 +4122,12 @@ def build_html(
       overflow: hidden;
       font-size: 12px;
       line-height: 1.35;
-      color: #334155;
+      color: #c7dce0;
+    }}
+    body[data-theme="light"] .news-summary,
+    body[data-theme="light"] .research-section p,
+    body[data-theme="light"] .index-leader-item em {{
+      color: #48616f;
     }}
     .news-time {{
       display: block;
@@ -3917,11 +4153,12 @@ def build_html(
       width: min(1240px, calc(100vw - 24px));
       max-height: min(94vh, 980px);
       overflow: hidden;
-      background: var(--paper);
+      background: var(--paper-2);
       border: 1px solid var(--line);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
+      border-radius: var(--radius-panel);
+      box-shadow: var(--panel-glow);
       padding: 10px 10px 8px;
+      clip-path: polygon(0 0, calc(100% - var(--cut-size)) 0, 100% var(--cut-size), 100% 100%, var(--cut-size) 100%, 0 calc(100% - var(--cut-size)));
     }}
     .modal-head {{
       display: flex;
@@ -3941,11 +4178,11 @@ def build_html(
     }}
     .modal-close {{
       border: none;
-      background: rgba(31,42,55,0.08);
+      background: rgba(83,242,229,0.08);
       color: var(--ink);
       width: 34px;
       height: 34px;
-      border-radius: 999px;
+      border-radius: 6px;
       cursor: pointer;
       font-size: 18px;
       line-height: 1;
@@ -3966,11 +4203,12 @@ def build_html(
       gap: 8px;
     }}
     .chart-insights .research-section {{
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 16px;
-      background: rgba(255,255,255,0.68);
+      border: 1px solid rgba(83,242,229,0.10);
+      border-radius: 8px;
+      background: rgba(9,18,27,0.92);
       padding: 10px;
       margin-top: 0;
+      clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
     }}
     .chart-insights .research-section.full-span {{
       grid-column: 1 / -1;
@@ -3982,10 +4220,11 @@ def build_html(
       align-items: start;
     }}
     .research-panel {{
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 18px;
-      background: rgba(255,255,255,0.68);
+      border: 1px solid rgba(83,242,229,0.10);
+      border-radius: 8px;
+      background: rgba(9,18,27,0.92);
       padding: 10px;
+      clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
     }}
     .research-grid {{
       display: grid;
@@ -3994,10 +4233,11 @@ def build_html(
       margin-bottom: 8px;
     }}
     .research-metric {{
-      border: 1px solid rgba(31,42,55,0.08);
-      border-radius: 14px;
-      background: rgba(255,255,255,0.7);
+      border: 1px solid rgba(83,242,229,0.10);
+      border-radius: 6px;
+      background: rgba(7,15,23,0.94);
       padding: 7px 8px;
+      clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
     }}
     .research-metric label {{
       display: block;
@@ -4025,7 +4265,7 @@ def build_html(
       margin: 0;
       font-size: 11px;
       line-height: 1.45;
-      color: #334155;
+      color: #c6dce1;
       white-space: pre-wrap;
     }}
     @media (max-width: 860px) {{
@@ -4071,8 +4311,7 @@ def build_html(
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <strong>A股看板</strong>
-        <span>{AS_OF.isoformat()}</span>
+        <strong>Stock Killer-A Shares</strong>
       </div>
       <nav class="sidebar-nav">
         <button class="sidebar-link active" type="button" data-view-target="market-view">市场行情</button>
@@ -4083,7 +4322,16 @@ def build_html(
     <main class="wrap">
     <section class="page-view active" id="market-view">
     <section class="hero">
-      <h1>股票跟踪看板</h1>
+      <div class="hero-actions">
+        <div class="theme-toggle" aria-label="主题切换">
+          <button id="theme-dark-button" type="button" data-theme-value="dark" aria-label="深色模式">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+          </button>
+          <button id="theme-light-button" type="button" data-theme-value="light" aria-label="浅色模式">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.72 5.28l-1.56 1.56M6.84 17.16l-1.56 1.56M18.72 18.72l-1.56-1.56M6.84 6.84 5.28 5.28"/></svg>
+          </button>
+        </div>
+      </div>
       <div class="search-bar">
         <span>搜索股票</span>
         <input id="stock-search" class="search-input" type="text" placeholder="输入股票名称或代码，例如 美利云 / 000815" />
@@ -4571,8 +4819,19 @@ def build_html(
     const indexLeaderList = document.getElementById('index-leader-list');
     const sidebarLinks = [...document.querySelectorAll('.sidebar-link[data-view-target]')];
     const pageViews = [...document.querySelectorAll('.page-view[id]')];
+    const themeButtons = [...document.querySelectorAll('[data-theme-value]')];
     const modalChart = echarts.init(modalChartNode, null, {{ renderer: 'canvas' }});
     const DASHBOARD_VIEW_KEY = 'astock_dashboard_view_v1';
+    const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v1';
+
+    function applyTheme(theme) {{
+      const nextTheme = theme === 'light' ? 'light' : 'dark';
+      document.body.setAttribute('data-theme', nextTheme);
+      window.localStorage.setItem(DASHBOARD_THEME_KEY, nextTheme);
+      themeButtons.forEach(button => {{
+        button.classList.toggle('active', button.dataset.themeValue === nextTheme);
+      }});
+    }}
 
     function setActiveView(viewId) {{
       pageViews.forEach(view => {{
@@ -5049,6 +5308,9 @@ def build_html(
         openIndexModalByCode(node.dataset.indexCode);
       }});
     }});
+    themeButtons.forEach(button => {{
+      button.addEventListener('click', () => applyTheme(button.dataset.themeValue));
+    }});
     sidebarLinks.forEach(link => {{
       link.addEventListener('click', () => setActiveView(link.dataset.viewTarget));
     }});
@@ -5151,6 +5413,8 @@ def build_html(
     updateWatchlistSortIndicators();
     applyWatchlistSort();
     renderReportEntries();
+    const savedTheme = window.localStorage.getItem(DASHBOARD_THEME_KEY);
+    applyTheme(savedTheme || 'dark');
     const savedView = window.localStorage.getItem(DASHBOARD_VIEW_KEY);
     const allowedViews = new Set(['market-view', 'institution-view', 'report-view']);
     setActiveView(allowedViews.has(savedView) ? savedView : 'market-view');
