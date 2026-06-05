@@ -37,6 +37,8 @@ LIMIT_UP_POOL_API = "https://push2ex.eastmoney.com/getTopicZTPool"
 QUOTE_API = "https://push2.eastmoney.com/api/qt/stock/get"
 OUT_DIR = Path("reports")
 OUT_DIR.mkdir(exist_ok=True)
+WATCHLIST_STATE_PATH = OUT_DIR / "watchlist_state.json"
+RESEARCH_REPORTS_PATH = OUT_DIR / "research_reports.json"
 TRUST_ENV = os.environ.get("ASTOCK_TRUST_ENV", "1").strip().lower() not in {"0", "false", "no", "off"}
 AS_OF_OVERRIDE = os.environ.get("ASTOCK_AS_OF", "").strip()
 AS_OF = date.fromisoformat(AS_OF_OVERRIDE) if AS_OF_OVERRIDE else datetime.now(timezone(timedelta(hours=8))).date()
@@ -110,6 +112,49 @@ def load_report_name_index() -> dict[str, str]:
     for name, code in REPORT_MODAL_NAME_MAP.items():
         index.setdefault(name, code)
     return index
+
+
+def load_watchlist_state_payload() -> dict[str, object]:
+    if not WATCHLIST_STATE_PATH.exists():
+        return {"watchlistStatus": {}, "strongJoinStatus": {}}
+    try:
+        payload = json.loads(WATCHLIST_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"watchlistStatus": {}, "strongJoinStatus": {}}
+    return {
+        "watchlistStatus": payload.get("watchlistStatus") or {},
+        "strongJoinStatus": payload.get("strongJoinStatus") or {},
+        "updatedAt": payload.get("updatedAt") or "",
+    }
+
+
+def load_research_report_entries() -> list[dict]:
+    if not RESEARCH_REPORTS_PATH.exists():
+        return []
+    try:
+        payload = json.loads(RESEARCH_REPORTS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(payload, list):
+        return []
+    out: list[dict] = []
+    for idx, item in enumerate(payload, start=1):
+        if not isinstance(item, dict):
+            continue
+        target = str(item.get("target") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if not target or not content:
+            continue
+        out.append(
+            {
+                "id": str(item.get("id") or f"report-{idx}"),
+                "target": target,
+                "content": content,
+                "date": str(item.get("date") or ""),
+                "createdAt": int(item.get("createdAt") or idx),
+            }
+        )
+    return out
 
 
 def score_report_modal_row(row: dict) -> int:
@@ -2939,6 +2984,10 @@ def build_html(
 ) -> str:
     market_overview = market_overview or {}
     institution_holdings = institution_holdings or {}
+    watchlist_state_payload = load_watchlist_state_payload()
+    initial_watchlist_status = watchlist_state_payload.get("watchlistStatus") or {}
+    initial_strong_join_status = watchlist_state_payload.get("strongJoinStatus") or {}
+    initial_report_entries = load_research_report_entries()
     market_dates = sorted(
         {
             row[0]
@@ -4823,6 +4872,30 @@ def build_html(
     const modalChart = echarts.init(modalChartNode, null, {{ renderer: 'canvas' }});
     const DASHBOARD_VIEW_KEY = 'astock_dashboard_view_v1';
     const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v1';
+    const INITIAL_WATCHLIST_STATUS = {json.dumps(initial_watchlist_status, ensure_ascii=False)};
+    const INITIAL_STRONG_JOIN_STATUS = {json.dumps(initial_strong_join_status, ensure_ascii=False)};
+    const INITIAL_REPORT_ENTRIES = {json.dumps(initial_report_entries, ensure_ascii=False)};
+
+    function normalizeReportEntry(entry, fallbackId) {{
+      if (!entry || typeof entry !== 'object') return null;
+      const target = String(entry.target || '').trim();
+      const content = String(entry.content || '').trim();
+      if (!target || !content) return null;
+      const date = String(entry.date || '');
+      const createdAt = Number(entry.createdAt || Date.now());
+      const id = String(entry.id || fallbackId || `${{target}}-${{date}}-${{createdAt}}`);
+      return {{ id, target, content, date, createdAt }};
+    }}
+
+    function mergeReportEntries(baseEntries, overlayEntries) {{
+      const merged = new Map();
+      [...baseEntries, ...overlayEntries].forEach((entry, idx) => {{
+        const normalized = normalizeReportEntry(entry, `report-${{idx + 1}}`);
+        if (!normalized) return;
+        merged.set(normalized.id, normalized);
+      }});
+      return [...merged.values()];
+    }}
 
     function applyTheme(theme) {{
       const nextTheme = theme === 'light' ? 'light' : 'dark';
@@ -4951,9 +5024,10 @@ def build_html(
 
     function loadWatchlistStatus() {{
       try {{
-        return JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{{}}');
+        const local = JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{{}}');
+        return {{ ...INITIAL_WATCHLIST_STATUS, ...(local || {{}}) }};
       }} catch (error) {{
-        return {{}};
+        return {{ ...INITIAL_WATCHLIST_STATUS }};
       }}
     }}
 
@@ -4963,9 +5037,10 @@ def build_html(
 
     function loadStrongJoinStatus() {{
       try {{
-        return JSON.parse(window.localStorage.getItem(WATCHLIST_STRONG_JOIN_KEY) || '{{}}');
+        const local = JSON.parse(window.localStorage.getItem(WATCHLIST_STRONG_JOIN_KEY) || '{{}}');
+        return {{ ...INITIAL_STRONG_JOIN_STATUS, ...(local || {{}}) }};
       }} catch (error) {{
-        return {{}};
+        return {{ ...INITIAL_STRONG_JOIN_STATUS }};
       }}
     }}
 
@@ -4977,9 +5052,9 @@ def build_html(
       try {{
         const raw = window.localStorage.getItem(REPORT_ENTRIES_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
+        return mergeReportEntries(INITIAL_REPORT_ENTRIES, Array.isArray(parsed) ? parsed : []);
       }} catch (error) {{
-        return [];
+        return [...INITIAL_REPORT_ENTRIES];
       }}
     }}
 

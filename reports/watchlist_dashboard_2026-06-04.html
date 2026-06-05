@@ -1176,12 +1176,12 @@
         <input id="stock-search" class="search-input" type="text" placeholder="输入股票名称或代码，例如 美利云 / 000815" />
       </div>
       <div class="meta">
-        <span>更新日期：2026-06-04</span>
+        <span>更新日期：2026-06-05</span>
         <span>行情数据截至：2026-06-01</span>
         <span>行情区间：近30个交易日</span>
         <span>数据源：iFinD QuantAPI / 本地缓存</span>
       </div>
-      <div class="notice-banner">当前页面文件日期为 2026-06-04，但行情主数据最新仅到 2026-06-01。当前为缓存展示，不应视为当日实盘数据。</div>
+      <div class="notice-banner">当前页面文件日期为 2026-06-05，但行情主数据最新仅到 2026-06-01。当前为缓存展示，不应视为当日实盘数据。</div>
     </section>
     <section class="market-overview panel">
       <div class="market-overview-head">
@@ -2500,7 +2500,7 @@
       <section class="hero">
         <h1>机构持仓</h1>
         <div class="meta">
-          <span>更新日期：2026-06-04</span>
+          <span>更新日期：2026-06-05</span>
           <span>基金规模披露期：2026-03-31</span>
           <span>数据源：天天基金 pingzhongdata / 腾讯行情名称映射</span>
         </div>
@@ -2795,8 +2795,8 @@
       <section class="hero">
         <h1>投研报告</h1>
         <div class="meta">
-          <span>更新日期：2026-06-04</span>
-          <span>默认日期：2026-06-04</span>
+          <span>更新日期：2026-06-05</span>
+          <span>默认日期：2026-06-05</span>
           <span>保存方式：当前浏览器本地存储</span>
         </div>
         <div class="notice-banner institution-note">
@@ -2811,7 +2811,7 @@
           </div>
           <div class="report-field">
             <label for="report-date-input">日期</label>
-            <input id="report-date-input" class="report-input" type="date" value="2026-06-04" />
+            <input id="report-date-input" class="report-input" type="date" value="2026-06-05" />
           </div>
           <div class="report-field full-span">
             <label for="report-content-input">内容</label>
@@ -3153,6 +3153,30 @@
     const modalChart = echarts.init(modalChartNode, null, { renderer: 'canvas' });
     const DASHBOARD_VIEW_KEY = 'astock_dashboard_view_v1';
     const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v1';
+    const INITIAL_WATCHLIST_STATUS = {};
+    const INITIAL_STRONG_JOIN_STATUS = {};
+    const INITIAL_REPORT_ENTRIES = [];
+
+    function normalizeReportEntry(entry, fallbackId) {
+      if (!entry || typeof entry !== 'object') return null;
+      const target = String(entry.target || '').trim();
+      const content = String(entry.content || '').trim();
+      if (!target || !content) return null;
+      const date = String(entry.date || '');
+      const createdAt = Number(entry.createdAt || Date.now());
+      const id = String(entry.id || fallbackId || `${target}-${date}-${createdAt}`);
+      return { id, target, content, date, createdAt };
+    }
+
+    function mergeReportEntries(baseEntries, overlayEntries) {
+      const merged = new Map();
+      [...baseEntries, ...overlayEntries].forEach((entry, idx) => {
+        const normalized = normalizeReportEntry(entry, `report-${idx + 1}`);
+        if (!normalized) return;
+        merged.set(normalized.id, normalized);
+      });
+      return [...merged.values()];
+    }
 
     function applyTheme(theme) {
       const nextTheme = theme === 'light' ? 'light' : 'dark';
@@ -3281,9 +3305,10 @@
 
     function loadWatchlistStatus() {
       try {
-        return JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{}');
+        const local = JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{}');
+        return { ...INITIAL_WATCHLIST_STATUS, ...(local || {}) };
       } catch (error) {
-        return {};
+        return { ...INITIAL_WATCHLIST_STATUS };
       }
     }
 
@@ -3293,9 +3318,10 @@
 
     function loadStrongJoinStatus() {
       try {
-        return JSON.parse(window.localStorage.getItem(WATCHLIST_STRONG_JOIN_KEY) || '{}');
+        const local = JSON.parse(window.localStorage.getItem(WATCHLIST_STRONG_JOIN_KEY) || '{}');
+        return { ...INITIAL_STRONG_JOIN_STATUS, ...(local || {}) };
       } catch (error) {
-        return {};
+        return { ...INITIAL_STRONG_JOIN_STATUS };
       }
     }
 
@@ -3307,9 +3333,9 @@
       try {
         const raw = window.localStorage.getItem(REPORT_ENTRIES_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
+        return mergeReportEntries(INITIAL_REPORT_ENTRIES, Array.isArray(parsed) ? parsed : []);
       } catch (error) {
-        return [];
+        return [...INITIAL_REPORT_ENTRIES];
       }
     }
 
@@ -3710,7 +3736,7 @@
     reportSaveButton.addEventListener('click', () => {
       const target = reportTargetInput.value.trim();
       const content = reportContentInput.value.trim();
-      const pickedDate = reportDateInput.value || '2026-06-04';
+      const pickedDate = reportDateInput.value || '2026-06-05';
       if (!target || !content) {
         window.alert('请先填写标的名称和内容。');
         return;

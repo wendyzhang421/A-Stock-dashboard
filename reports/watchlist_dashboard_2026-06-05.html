@@ -3656,6 +3656,30 @@
     const modalChart = echarts.init(modalChartNode, null, { renderer: 'canvas' });
     const DASHBOARD_VIEW_KEY = 'astock_dashboard_view_v1';
     const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v1';
+    const INITIAL_WATCHLIST_STATUS = {};
+    const INITIAL_STRONG_JOIN_STATUS = {};
+    const INITIAL_REPORT_ENTRIES = [];
+
+    function normalizeReportEntry(entry, fallbackId) {
+      if (!entry || typeof entry !== 'object') return null;
+      const target = String(entry.target || '').trim();
+      const content = String(entry.content || '').trim();
+      if (!target || !content) return null;
+      const date = String(entry.date || '');
+      const createdAt = Number(entry.createdAt || Date.now());
+      const id = String(entry.id || fallbackId || `${target}-${date}-${createdAt}`);
+      return { id, target, content, date, createdAt };
+    }
+
+    function mergeReportEntries(baseEntries, overlayEntries) {
+      const merged = new Map();
+      [...baseEntries, ...overlayEntries].forEach((entry, idx) => {
+        const normalized = normalizeReportEntry(entry, `report-${idx + 1}`);
+        if (!normalized) return;
+        merged.set(normalized.id, normalized);
+      });
+      return [...merged.values()];
+    }
 
     function applyTheme(theme) {
       const nextTheme = theme === 'light' ? 'light' : 'dark';
@@ -3784,9 +3808,10 @@
 
     function loadWatchlistStatus() {
       try {
-        return JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{}');
+        const local = JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{}');
+        return { ...INITIAL_WATCHLIST_STATUS, ...(local || {}) };
       } catch (error) {
-        return {};
+        return { ...INITIAL_WATCHLIST_STATUS };
       }
     }
 
@@ -3796,9 +3821,10 @@
 
     function loadStrongJoinStatus() {
       try {
-        return JSON.parse(window.localStorage.getItem(WATCHLIST_STRONG_JOIN_KEY) || '{}');
+        const local = JSON.parse(window.localStorage.getItem(WATCHLIST_STRONG_JOIN_KEY) || '{}');
+        return { ...INITIAL_STRONG_JOIN_STATUS, ...(local || {}) };
       } catch (error) {
-        return {};
+        return { ...INITIAL_STRONG_JOIN_STATUS };
       }
     }
 
@@ -3810,9 +3836,9 @@
       try {
         const raw = window.localStorage.getItem(REPORT_ENTRIES_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
+        return mergeReportEntries(INITIAL_REPORT_ENTRIES, Array.isArray(parsed) ? parsed : []);
       } catch (error) {
-        return [];
+        return [...INITIAL_REPORT_ENTRIES];
       }
     }
 
