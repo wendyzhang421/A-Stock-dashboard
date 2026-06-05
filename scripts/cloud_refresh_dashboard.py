@@ -131,6 +131,7 @@ def main() -> int:
     institution_path = reports / f"institution_holdings_{as_of.isoformat()}.json"
     html_path = reports / f"watchlist_dashboard_{as_of.isoformat()}.html"
     index_path = reports / "share_dashboard" / "index.html"
+    root_index_path = reports / "index.html"
 
     used_public_fallback = False
     used_cached_fallback = False
@@ -195,6 +196,10 @@ def main() -> int:
     html_path.write_text(d.build_html(watch, strong, market_overview, institution_holdings), encoding="utf-8")
     index_path.write_text(
         f'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=../watchlist_dashboard_{as_of.isoformat()}.html">',
+        encoding="utf-8",
+    )
+    root_index_path.write_text(
+        '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=share_dashboard/">',
         encoding="utf-8",
     )
 

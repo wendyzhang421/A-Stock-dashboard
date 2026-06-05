@@ -86,6 +86,73 @@ INDEX_DETAIL_MAP = {
         ],
     },
 }
+REPORT_MODAL_NAME_MAP = {
+    "江海股份": "002484.SZ",
+    "江丰电子": "300666.SZ",
+    "绿的谐波": "688017.SH",
+}
+
+
+def load_report_name_index() -> dict[str, str]:
+    index: dict[str, str] = {}
+    for path in sorted(OUT_DIR.glob("watchlist_dashboard_*.json")) + sorted(OUT_DIR.glob("watchlist_strong_stocks_*.json")):
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            code = row.get("code")
+            name = row.get("name")
+            if code and name and name not in index:
+                index[str(name)] = str(code)
+    for name, code in REPORT_MODAL_NAME_MAP.items():
+        index.setdefault(name, code)
+    return index
+
+
+def score_report_modal_row(row: dict) -> int:
+    score = 0
+    if row.get("kline"):
+        score += 5
+    if row.get("latestNews", {}).get("summary"):
+        score += 3
+    if row.get("topHolders", {}).get("holders"):
+        score += 3
+    if row.get("businessSegments", {}).get("items"):
+        score += 3
+    if row.get("topCustomers", {}).get("customers"):
+        score += 2
+    if row.get("marginFinancing", {}).get("date"):
+        score += 2
+    if row.get("research"):
+        score += 1
+    if row.get("mainBusiness") not in (None, "", "-"):
+        score += 1
+    return score
+
+
+def load_historical_report_row(code: str) -> dict | None:
+    best_row: dict | None = None
+    best_score = -1
+    paths = sorted(OUT_DIR.glob("watchlist_dashboard_*.json")) + sorted(OUT_DIR.glob("watchlist_strong_stocks_*.json"))
+    for path in paths:
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if row.get("code") != code:
+                continue
+            candidate = dict(row)
+            score = score_report_modal_row(candidate)
+            if score >= best_score:
+                best_score = score
+                best_row = candidate
+    return best_row
 
 INSTITUTION_FUND_CODES = [
     "159915",
@@ -1255,6 +1322,10 @@ def update_row_from_public_kline(row: dict, as_of: date) -> dict:
         row["todayAmount"] = float(snapshot["todayAmount"])
     if snapshot.get("turnoverRate") is not None:
         row["turnoverRate"] = float(snapshot["turnoverRate"])
+    if snapshot.get("totalMarketCap"):
+        row["totalMarketCap"] = float(snapshot["totalMarketCap"])
+    if snapshot.get("floatMarketCap"):
+        row["floatMarketCap"] = float(snapshot["floatMarketCap"])
     if total_shares and row.get("latestClose"):
         row["totalMarketCap"] = total_shares * float(row["latestClose"])
     if float_shares and row.get("latestClose"):
@@ -2771,6 +2842,95 @@ def is_limit_up_candidate(code: str, pct: float | None) -> bool:
     return pct >= 9.7
 
 
+def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[dict]:
+    extras: list[dict] = []
+    seen = set(current_codes)
+    report_name_index = load_report_name_index()
+    mapped_codes = set(REPORT_MODAL_NAME_MAP.values())
+    for name, code in report_name_index.items():
+        if code in seen:
+            continue
+        historical = load_historical_report_row(code) or {}
+        seed = {
+            "code": code,
+            "name": name,
+            "mainBusiness": MAIN_BUSINESS_MAP.get(code) or "-",
+            "industry": "",
+            "research": build_research_payload(code, {}),
+            "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
+            "topHolders": {"reportDate": "", "totalRatio": None, "holders": []},
+            "businessSegments": {"reportDate": "", "category": "", "items": []},
+            "topCustomers": {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []},
+            "orderBook": {"time": "", "asks": [], "bids": []},
+            "kline": [],
+            "last5": [],
+            "latestClose": None,
+            "todayPct": None,
+            "todayVolume": 0.0,
+            "todayAmount": 0.0,
+            "turnoverRate": None,
+            "totalMarketCap": 0.0,
+            "floatMarketCap": 0.0,
+            "latestNews": {"time": "", "summary": "", "title": "", "link": "", "isRecent": False},
+        }
+        if historical:
+            seed = {
+                **seed,
+                **historical,
+                "code": code,
+                "name": historical.get("name") or name,
+                "mainBusiness": historical.get("mainBusiness") or seed["mainBusiness"],
+                "research": historical.get("research") or seed["research"],
+                "marginFinancing": historical.get("marginFinancing") or seed["marginFinancing"],
+                "topHolders": historical.get("topHolders") or seed["topHolders"],
+                "businessSegments": historical.get("businessSegments") or seed["businessSegments"],
+                "topCustomers": historical.get("topCustomers") or seed["topCustomers"],
+                "orderBook": historical.get("orderBook") or seed["orderBook"],
+                "latestNews": historical.get("latestNews") or seed["latestNews"],
+                "kline": historical.get("kline") or seed["kline"],
+                "last5": historical.get("last5") or seed["last5"],
+            }
+        needs_live_fill = code in mapped_codes and (
+            not seed.get("kline")
+            or not seed.get("latestClose")
+            or not seed.get("totalMarketCap")
+        )
+        if needs_live_fill:
+            try:
+                seed = update_row_from_public_kline(seed, AS_OF)
+            except Exception:
+                pass
+            try:
+                seed["latestNews"] = fetch_latest_news_map([(name, code)]).get(code) or seed["latestNews"]
+            except Exception:
+                pass
+        seen.add(code)
+        extras.append(seed)
+        if len(extras) >= limit:
+            return extras
+    paths = sorted(OUT_DIR.glob("watchlist_strong_stocks_*.json"))
+    for path in reversed(paths):
+        try:
+            path_date = date.fromisoformat(path.stem.removeprefix("watchlist_strong_stocks_"))
+        except ValueError:
+            continue
+        if path_date > AS_OF:
+            continue
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for row in rows:
+            code = row.get("code")
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            extras.append(row)
+            if len(extras) >= limit:
+                return extras
+    return extras
+
+
 def build_html(
     dataset: list[dict],
     strong_stocks: list[dict],
@@ -2904,7 +3064,9 @@ def build_html(
             </tr>
             """
         )
-    modal_items = dataset + strong_stocks
+    current_modal_codes = {item.get("code") for item in (dataset + strong_stocks) if item.get("code")}
+    report_modal_extras = load_report_modal_extras(current_modal_codes)
+    modal_items = dataset + strong_stocks + report_modal_extras
     table_rows = []
     for item in dataset:
         pct_class = "pct-rise" if (item["todayPct"] or 0) > 0 else "pct-fall" if (item["todayPct"] or 0) < 0 else "pct-flat"
@@ -3596,6 +3758,22 @@ def build_html(
     .report-save-button:hover {{
       filter: brightness(1.02);
     }}
+    .report-target-trigger {{
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      border: none;
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+    }}
+    .report-target-trigger:hover .stock-name {{
+      color: var(--accent);
+      text-decoration: underline;
+    }}
     .report-empty {{
       margin-top: 12px;
       padding: 18px 16px;
@@ -4223,6 +4401,7 @@ def build_html(
   <script>
     const dataset = {json.dumps(dataset, ensure_ascii=False)};
     const strongStocks = {json.dumps(strong_stocks, ensure_ascii=False)};
+    const reportModalExtras = {json.dumps(report_modal_extras, ensure_ascii=False)};
     const marketOverview = {json.dumps(market_overview, ensure_ascii=False)};
     const institutionHoldings = {json.dumps(institution_holdings, ensure_ascii=False)};
     const datasetCodeSet = new Set(dataset.map(item => item.code));
@@ -4230,8 +4409,25 @@ def build_html(
       if (datasetCodeSet.has(item.code)) return false;
       return list.findIndex(other => other.code === item.code) === idx;
     }});
-    const modalItems = dataset.concat(momentumExtras);
+    const modalSeenCodes = new Set(dataset.map(item => item.code));
+    momentumExtras.forEach(item => modalSeenCodes.add(item.code));
+    const modalItems = dataset
+      .concat(momentumExtras)
+      .concat(reportModalExtras.filter(item => !modalSeenCodes.has(item.code)));
     const modalIndexByCode = Object.fromEntries(modalItems.map((item, idx) => [item.code, idx]));
+    const modalCodeByAlias = {{}};
+    function normalizeModalAlias(value) {{
+      return String(value || '').trim().toLowerCase().replace(/\\s+/g, '');
+    }}
+    modalItems.forEach(item => {{
+      const aliases = [item.name, item.code, (item.code || '').split('.')[0]];
+      aliases.forEach(alias => {{
+        const normalized = normalizeModalAlias(alias);
+        if (normalized && !modalCodeByAlias[normalized]) {{
+          modalCodeByAlias[normalized] = item.code;
+        }}
+      }});
+    }});
     const indexCards = marketOverview.indices || [];
     const indexCardByCode = Object.fromEntries(indexCards.map(item => [item.code, item]));
 
@@ -4532,6 +4728,17 @@ def build_html(
       window.localStorage.setItem(REPORT_ENTRIES_KEY, JSON.stringify(entries));
     }}
 
+    function renderReportTargetCell(target) {{
+      const display = escapeHtml(target);
+      const matchedCode = modalCodeByAlias[normalizeModalAlias(target)];
+      if (!matchedCode) {{
+        return display;
+      }}
+      const matchedItem = modalItems[modalIndexByCode[matchedCode]];
+      const codeText = matchedItem?.code ? `<span class="stock-code">${{escapeHtml(matchedItem.code)}}</span>` : '';
+      return `<button class="report-target-trigger" type="button" data-code="${{escapeHtml(matchedCode)}}"><span class="stock-name">${{display}}</span>${{codeText}}</button>`;
+    }}
+
     function setSelectVisualState(select) {{
       select.dataset.state = select.value;
     }}
@@ -4714,12 +4921,38 @@ def build_html(
       }});
     }}
 
-    function syncStrongSelectionsIntoWatchlist() {{
+    function collectReportWatchlistItems() {{
+      const entries = loadReportEntries();
+      const seenCodes = new Set();
+      const items = [];
+      entries.forEach(entry => {{
+        const matchedCode = modalCodeByAlias[normalizeModalAlias(entry.target)];
+        if (!matchedCode || seenCodes.has(matchedCode)) return;
+        const idx = modalIndexByCode[matchedCode];
+        const item = modalItems[idx];
+        if (!item) return;
+        seenCodes.add(matchedCode);
+        items.push(item);
+      }});
+      return items;
+    }}
+
+    function syncSyntheticWatchlistRows() {{
       watchlistTableBody.querySelectorAll('tr[data-synthetic="true"]').forEach(row => row.remove());
       const existingCodes = new Set([...watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]:not([data-synthetic="true"])')].map(row => row.dataset.code));
+      const syntheticItems = [];
       strongStocks.forEach(item => {{
         if (existingCodes.has(item.code)) return;
         if (strongJoinMap[item.code] !== 'joined') return;
+        syntheticItems.push(item);
+        existingCodes.add(item.code);
+      }});
+      collectReportWatchlistItems().forEach(item => {{
+        if (existingCodes.has(item.code)) return;
+        syntheticItems.push(item);
+        existingCodes.add(item.code);
+      }});
+      syntheticItems.forEach(item => {{
         const row = createSyntheticWatchlistRow(item);
         watchlistTableBody.appendChild(row);
         bindWatchlistRow(row);
@@ -4794,7 +5027,7 @@ def build_html(
       reportTableBody.innerHTML = entries.map((entry, index) => `
         <tr>
           <td class="index-cell">${{index + 1}}</td>
-          <td>${{escapeHtml(entry.target)}}</td>
+          <td>${{renderReportTargetCell(entry.target)}}</td>
           <td class="nowrap-cell">${{escapeHtml(entry.date)}}</td>
           <td style="white-space: pre-wrap;">${{escapeHtml(entry.content)}}</td>
         </tr>
@@ -4852,7 +5085,7 @@ def build_html(
         }}
         setSelectVisualState(select);
         saveStrongJoinStatus(strongJoinMap);
-        syncStrongSelectionsIntoWatchlist();
+        syncSyntheticWatchlistRows();
       }});
     }});
 
@@ -4902,9 +5135,18 @@ def build_html(
       reportContentInput.value = '';
       reportDateInput.value = pickedDate;
       renderReportEntries();
+      syncSyntheticWatchlistRows();
     }});
 
-    syncStrongSelectionsIntoWatchlist();
+    reportTableBody.addEventListener('click', event => {{
+      const trigger = event.target.closest('.report-target-trigger');
+      if (!trigger) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openStockModalByCode(trigger.dataset.code);
+    }});
+
+    syncSyntheticWatchlistRows();
     syncStrongStockStatusControls();
     updateWatchlistSortIndicators();
     applyWatchlistSort();
