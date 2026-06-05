@@ -118,8 +118,61 @@ def patch_watchlist_to_today(access_token: str | None, watch: list[dict], as_of:
 def patch_strong_main_business(strong: list[dict]) -> list[dict]:
     for row in strong:
         if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
-            row["mainBusiness"] = d.MAIN_BUSINESS_MAP.get(row["code"]) or "-"
+            historical = d.load_historical_report_row(row["code"]) or {}
+            row["mainBusiness"] = (
+                d.MAIN_BUSINESS_MAP.get(row["code"])
+                or historical.get("mainBusiness")
+                or row.get("mainBusiness")
+                or "-"
+            )
     return strong
+
+
+def patch_main_business_and_news(watch: list[dict], strong: list[dict]) -> tuple[list[dict], list[dict]]:
+    all_rows = watch + strong
+    news_targets: list[tuple[str, str]] = []
+    seen_codes: set[str] = set()
+    for row in all_rows:
+        code = row.get("code")
+        name = row.get("name")
+        if not code or not name or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        news_targets.append((name, code))
+
+    try:
+        news_map = d.fetch_latest_news_map(news_targets)
+    except Exception:
+        news_map = {}
+
+    for row in all_rows:
+        code = row.get("code", "")
+        historical = d.load_historical_report_row(code) or {}
+        latest_news = news_map.get(code) or historical.get("latestNews") or row.get("latestNews") or {
+            "time": "",
+            "summary": "",
+            "title": "",
+            "link": "",
+            "isRecent": False,
+        }
+        row["latestNews"] = latest_news
+        if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
+            news_hint = d.infer_main_business_from_text(
+                " ".join(
+                    [
+                        latest_news.get("title", ""),
+                        latest_news.get("summary", ""),
+                    ]
+                )
+            )
+            row["mainBusiness"] = (
+                d.MAIN_BUSINESS_MAP.get(code)
+                or historical.get("mainBusiness")
+                or row.get("industry")
+                or news_hint
+                or "-"
+            )
+    return watch, strong
 
 
 def main() -> int:
@@ -175,6 +228,7 @@ def main() -> int:
     watch = patch_watchlist_to_today(access_token, watch, as_of)
     watch = d.sort_watchlist_dataset(d.backfill_market_caps(d.hydrate_cached_dataset(watch)))
     strong = patch_strong_main_business(d.hydrate_cached_strong_stocks(strong))
+    watch, strong = patch_main_business_and_news(watch, strong)
 
     prior_institution = latest_prior_path(reports, "institution_holdings", ".json", as_of)
     if institution_path.exists():
