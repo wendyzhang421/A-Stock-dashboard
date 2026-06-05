@@ -59,6 +59,7 @@ jobs:
           status=$?
           if [ "${status}" -ne 0 ]; then
             echo "Cloud refresh failed; keeping the latest committed reports as deployment fallback."
+            echo "Cloud refresh failed for ${{ steps.refresh-date.outputs.value }}; deployed fallback reports instead." >> "${GITHUB_STEP_SUMMARY}"
           fi
           exit 0
 
@@ -67,6 +68,7 @@ jobs:
         run: |
           if git diff --quiet -- reports; then
             echo "No report changes to commit."
+            echo "No new report files were generated for ${{ steps.refresh-date.outputs.value }}." >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -74,6 +76,7 @@ jobs:
           git add reports
           git commit -m "Refresh dashboard for ${{ steps.refresh-date.outputs.value }}"
           git push
+          echo "Committed refreshed reports for ${{ steps.refresh-date.outputs.value }}." >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
