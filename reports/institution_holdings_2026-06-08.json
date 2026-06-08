@@ -22,15 +22,77 @@
   },
   "rows": [
     {
+      "fundCode": "510300",
+      "fundName": "沪深300ETF华泰柏瑞",
+      "fundScaleYi": 1999.14,
+      "scaleChange": "-52.66%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 24.84,
+      "recent6mReturn": 2.66,
+      "recent3mReturn": 1.47,
+      "recent1mReturn": -3.05,
+      "institutionHolderRatio": 90.27,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 97.76,
+      "assetReportDate": "2026-03-31",
+      "managerName": "柳军",
+      "managerWorkTime": "17年又8天",
+      "managerFundSize": "3388.01亿(31只基金)",
+      "managerTenureReturn": 125.7508,
+      "managerNavDate": "2026-06-08",
+      "topHoldings": [
+        {
+          "name": "宁德时代",
+          "code": "300750.SZ"
+        },
+        {
+          "name": "贵州茅台",
+          "code": "600519.SH"
+        },
+        {
+          "name": "中际旭创",
+          "code": "300308.SZ"
+        },
+        {
+          "name": "中国平安",
+          "code": "601318.SH"
+        },
+        {
+          "name": "紫金矿业",
+          "code": "601899.SH"
+        },
+        {
+          "name": "招商银行",
+          "code": "600036.SH"
+        },
+        {
+          "name": "新易盛",
+          "code": "300502.SZ"
+        },
+        {
+          "name": "美的集团",
+          "code": "000333.SZ"
+        },
+        {
+          "name": "长江电力",
+          "code": "600900.SH"
+        },
+        {
+          "name": "兴业银行",
+          "code": "601166.SH"
+        }
+      ]
+    },
+    {
       "fundCode": "588000",
       "fundName": "科创50ETF华夏",
       "fundScaleYi": 685.48,
       "scaleChange": "-9.83%",
       "scaleReportDate": "2026-03-31",
-      "recent1yReturn": 68.18,
-      "recent6mReturn": 26.3,
-      "recent3mReturn": 18.78,
-      "recent1mReturn": 6.31,
+      "recent1yReturn": 61.88,
+      "recent6mReturn": 18.79,
+      "recent3mReturn": 13.15,
+      "recent1mReturn": -2.47,
       "institutionHolderRatio": 21.79,
       "holderReportDate": "2025-12-31",
       "stockAllocationRatio": 99.57,
@@ -39,7 +101,7 @@
       "managerWorkTime": "10年又217天",
       "managerFundSize": "1397.82亿(33只基金)",
       "managerTenureReturn": 22.2086,
-      "managerNavDate": "2026-06-05",
+      "managerNavDate": "2026-06-08",
       "topHoldings": [
         {
           "name": "寒武纪",
@@ -89,10 +151,10 @@
       "fundScaleYi": 510.3,
       "scaleChange": "-49.20%",
       "scaleReportDate": "2026-03-31",
-      "recent1yReturn": 96.27,
-      "recent6mReturn": 28.56,
-      "recent3mReturn": 23.85,
-      "recent1mReturn": 7.77,
+      "recent1yReturn": 89.83,
+      "recent6mReturn": 20.67,
+      "recent3mReturn": 18.83,
+      "recent1mReturn": 0.53,
       "institutionHolderRatio": 78.83,
       "holderReportDate": "2025-12-31",
       "stockAllocationRatio": 99.79,
@@ -101,7 +163,7 @@
       "managerWorkTime": "10年又34天",
       "managerFundSize": "1660.26亿(28只基金)",
       "managerTenureReturn": 95.7141,
-      "managerNavDate": "2026-06-05",
+      "managerNavDate": "2026-06-08",
       "topHoldings": [
         {
           "name": "宁德时代",
@@ -163,7 +225,7 @@
       "managerWorkTime": "5年又131天",
       "managerFundSize": "391.40亿(20只基金)",
       "managerTenureReturn": -16.6528,
-      "managerNavDate": "2026-06-05",
+      "managerNavDate": "2026-06-08",
       "topHoldings": [
         {
           "name": "药明康德",
@@ -213,10 +275,10 @@
       "fundScaleYi": 229.03,
       "scaleChange": "-9.11%",
       "scaleReportDate": "2026-03-31",
-      "recent1yReturn": 98.8,
-      "recent6mReturn": 42.81,
-      "recent3mReturn": 29.36,
-      "recent1mReturn": 15.63,
+      "recent1yReturn": 90.07,
+      "recent6mReturn": 33.44,
+      "recent3mReturn": 23.93,
+      "recent1mReturn": 5.67,
       "institutionHolderRatio": 10.33,
       "holderReportDate": "2025-12-31",
       "stockAllocationRatio": 99.9,
@@ -225,7 +287,7 @@
       "managerWorkTime": "9年又54天",
       "managerFundSize": "1722.70亿(30只基金)",
       "managerTenureReturn": 140.01,
-      "managerNavDate": "2026-06-05",
+      "managerNavDate": "2026-06-08",
       "topHoldings": [
         {
           "name": "海光信息",
@@ -275,10 +337,10 @@
       "fundScaleYi": 199.06,
       "scaleChange": "-1.28%",
       "scaleReportDate": "2026-03-31",
-      "recent1yReturn": 103.6,
-      "recent6mReturn": 48.7,
-      "recent3mReturn": 31.85,
-      "recent1mReturn": 15.08,
+      "recent1yReturn": 94.27,
+      "recent6mReturn": 38.51,
+      "recent3mReturn": 25.8,
+      "recent1mReturn": 5.04,
       "institutionHolderRatio": 32.09,
       "holderReportDate": "2025-12-31",
       "stockAllocationRatio": 99.57,
@@ -287,7 +349,7 @@
       "managerWorkTime": "16年又57天",
       "managerFundSize": "337.99亿(22只基金)",
       "managerTenureReturn": 318.12,
-      "managerNavDate": "2026-06-05",
+      "managerNavDate": "2026-06-08",
       "topHoldings": [
         {
           "name": "寒武纪",
@@ -337,10 +399,10 @@
       "fundScaleYi": 106.51,
       "scaleChange": "-5.34%",
       "scaleReportDate": "2026-03-31",
-      "recent1yReturn": 60.68,
-      "recent6mReturn": 9.15,
-      "recent3mReturn": -7.34,
-      "recent1mReturn": -2.02,
+      "recent1yReturn": 52.4,
+      "recent6mReturn": 2.14,
+      "recent3mReturn": -12.4,
+      "recent1mReturn": -10.05,
       "institutionHolderRatio": 41.3,
       "holderReportDate": "2025-12-31",
       "stockAllocationRatio": 98.83,
@@ -349,7 +411,7 @@
       "managerWorkTime": "6年又217天",
       "managerFundSize": "495.11亿(28只基金)",
       "managerTenureReturn": 4.04,
-      "managerNavDate": "2026-06-05",
+      "managerNavDate": "2026-06-08",
       "topHoldings": [
         {
           "name": "特变电工",
@@ -399,10 +461,10 @@
       "fundScaleYi": 94.08,
       "scaleChange": "-11.67%",
       "scaleReportDate": "2026-03-31",
-      "recent1yReturn": 21.28,
-      "recent6mReturn": 5.84,
-      "recent3mReturn": -15.46,
-      "recent1mReturn": -8.91,
+      "recent1yReturn": 16.46,
+      "recent6mReturn": 0.23,
+      "recent3mReturn": -19.77,
+      "recent1mReturn": -17.14,
       "institutionHolderRatio": 58.08,
       "holderReportDate": "2025-12-31",
       "stockAllocationRatio": 99.73,
@@ -411,7 +473,7 @@
       "managerWorkTime": "12年又149天",
       "managerFundSize": "2109.33亿(28只基金)",
       "managerTenureReturn": 27.43,
-      "managerNavDate": "2026-06-05",
+      "managerNavDate": "2026-06-08",
       "topHoldings": [
         {
           "name": "中国船舶",
