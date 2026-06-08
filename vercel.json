@@ -1,7 +1,15 @@
 {
-  "functions": {
-    "api/*.js": {
-      "runtime": "@vercel/node@5.3.24"
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/dashboard-state.js",
+      "use": "@vercel/node@5.3.24"
     }
-  }
+  ],
+  "routes": [
+    {
+      "src": "/api/dashboard-state",
+      "dest": "api/dashboard-state.js"
+    }
+  ]
 }
