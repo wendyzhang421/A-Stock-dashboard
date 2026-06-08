@@ -246,3 +246,76 @@ https://<你的 GitHub 用户名>.github.io/<仓库名>/share_dashboard/
 - GitHub Actions 的定时触发按 `UTC` 运行，存在几分钟级延迟是正常的
 - `iFinD token` 过期后，需要去 GitHub Secrets 里手动更新
 - 如果 `iFinD` 历史接口额度耗尽，工作流会自动退回公用数据源，但当天某些字段可能没有完整的 `iFinD` 富数据
+
+## 11) 网页端自选/投研报告云端持久化
+
+`stockkiller.xyz` 当前主站仍是静态页面。要让网页端修改的：
+
+- 自选移除状态
+- 强势股“加入自选”状态
+- 投研报告录入内容
+
+真正跨设备同步，需要一个很小的写回 API。仓库里已经准备好了：
+
+- API 文件：`api/dashboard-state.js`
+- 状态文件：
+  - `reports/watchlist_state.json`
+  - `reports/research_reports.json`
+
+### 推荐部署方式
+
+把当前仓库部署一份到 Vercel，仅用于提供 API。
+
+建议绑定子域名：
+
+```text
+api.stockkiller.xyz
+```
+
+指向这个 Vercel 项目。
+
+### Vercel 需要配置的环境变量
+
+```bash
+GITHUB_TOKEN=你的 GitHub PAT（需要仓库写权限）
+GITHUB_REPO=wendyzhang421/A-Stock-dashboard
+GITHUB_BRANCH=main
+DASHBOARD_ADMIN_TOKEN=你自己设置的一串管理口令
+```
+
+说明：
+
+- `GITHUB_TOKEN` 用来把网页端修改写回仓库 JSON
+- `DASHBOARD_ADMIN_TOKEN` 用来保护写接口，避免任何访客都能改你的自选/报告
+
+### 前端如何工作
+
+页面会先立即写本地浏览器缓存，再后台尝试同步到 API：
+
+- 成功：仓库 JSON 更新，其他设备打开网页也能看到
+- 失败：当前浏览器本地状态仍保留，不会阻塞操作
+
+如果网页首次写回时没有本地保存过管理口令，页面会弹出一次输入框，要求输入：
+
+```text
+Dashboard admin token
+```
+
+输入一次后会缓存在当前浏览器。
+
+### 本地调试
+
+可以先在本地运行：
+
+```bash
+set -a
+source .env.local
+set +a
+npx vercel dev
+```
+
+默认接口路径：
+
+```text
+/api/dashboard-state
+```

@@ -4884,9 +4884,20 @@ def build_html(
     const modalChart = echarts.init(modalChartNode, null, {{ renderer: 'canvas' }});
     const DASHBOARD_VIEW_KEY = 'astock_dashboard_view_v1';
     const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v1';
+    const DASHBOARD_STATE_API_KEY = 'astock_dashboard_state_api_url_v1';
+    const DASHBOARD_ADMIN_TOKEN_KEY = 'astock_dashboard_admin_token_v1';
     const INITIAL_WATCHLIST_STATUS = {json.dumps(initial_watchlist_status, ensure_ascii=False)};
     const INITIAL_STRONG_JOIN_STATUS = {json.dumps(initial_strong_join_status, ensure_ascii=False)};
     const INITIAL_REPORT_ENTRIES = {json.dumps(initial_report_entries, ensure_ascii=False)};
+    const DEFAULT_DASHBOARD_STATE_API = (() => {{
+      const host = window.location.hostname;
+      if (host === 'stockkiller.xyz' || host === 'www.stockkiller.xyz') {{
+        return 'https://api.stockkiller.xyz/api/dashboard-state';
+      }}
+      return '';
+    }})();
+    let dashboardStateSyncPromise = Promise.resolve();
+    let dashboardStateBootstrapped = false;
 
     function normalizeReportEntry(entry, fallbackId) {{
       if (!entry || typeof entry !== 'object') return null;
@@ -4907,6 +4918,58 @@ def build_html(
         merged.set(normalized.id, normalized);
       }});
       return [...merged.values()];
+    }}
+
+    function getDashboardStateApiUrl() {{
+      return window.localStorage.getItem(DASHBOARD_STATE_API_KEY) || DEFAULT_DASHBOARD_STATE_API;
+    }}
+
+    function getDashboardAdminToken() {{
+      return window.localStorage.getItem(DASHBOARD_ADMIN_TOKEN_KEY) || '';
+    }}
+
+    function setDashboardAdminToken(token) {{
+      const normalized = String(token || '').trim();
+      if (normalized) {{
+        window.localStorage.setItem(DASHBOARD_ADMIN_TOKEN_KEY, normalized);
+      }} else {{
+        window.localStorage.removeItem(DASHBOARD_ADMIN_TOKEN_KEY);
+      }}
+    }}
+
+    function normalizeWatchlistStatusPayload(payload) {{
+      const next = {{}};
+      if (!payload || typeof payload !== 'object') return next;
+      Object.entries(payload).forEach(([code, value]) => {{
+        const normalizedCode = String(code || '').trim();
+        const normalizedValue = String(value || '').trim();
+        if (!normalizedCode) return;
+        if (normalizedValue === 'removed') {{
+          next[normalizedCode] = 'removed';
+        }}
+      }});
+      return next;
+    }}
+
+    function normalizeStrongJoinPayload(payload) {{
+      const next = {{}};
+      if (!payload || typeof payload !== 'object') return next;
+      Object.entries(payload).forEach(([code, value]) => {{
+        const normalizedCode = String(code || '').trim();
+        const normalizedValue = String(value || '').trim();
+        if (!normalizedCode) return;
+        if (normalizedValue === 'joined') {{
+          next[normalizedCode] = 'joined';
+        }}
+      }});
+      return next;
+    }}
+
+    function replaceObjectContents(target, source) {{
+      Object.keys(target).forEach(key => delete target[key]);
+      Object.entries(source).forEach(([key, value]) => {{
+        target[key] = value;
+      }});
     }}
 
     function applyTheme(theme) {{
@@ -5074,6 +5137,109 @@ def build_html(
       window.localStorage.setItem(REPORT_ENTRIES_KEY, JSON.stringify(entries));
     }}
 
+    function buildDashboardStatePayload() {{
+      return {{
+        watchlistStatus: normalizeWatchlistStatusPayload(watchlistStatusMap),
+        strongJoinStatus: normalizeStrongJoinPayload(strongJoinMap),
+        reports: loadReportEntries(),
+      }};
+    }}
+
+    async function requestDashboardAdminToken() {{
+      const token = window.prompt('输入 Dashboard admin token 以开启云端同步');
+      if (!token) return '';
+      setDashboardAdminToken(token);
+      return token;
+    }}
+
+    function applyRemoteDashboardState(payload) {{
+      const nextWatchlistStatus = normalizeWatchlistStatusPayload(payload?.watchlistStatus || {{}});
+      const nextStrongJoinStatus = normalizeStrongJoinPayload(payload?.strongJoinStatus || {{}});
+      const nextReports = mergeReportEntries([], Array.isArray(payload?.reports) ? payload.reports : []);
+      replaceObjectContents(watchlistStatusMap, nextWatchlistStatus);
+      replaceObjectContents(strongJoinMap, nextStrongJoinStatus);
+      saveWatchlistStatus(watchlistStatusMap);
+      saveStrongJoinStatus(strongJoinMap);
+      saveReportEntries(nextReports);
+      syncSyntheticWatchlistRows();
+      syncStrongStockStatusControls();
+      applyWatchlistVisibility();
+      renderReportEntries();
+    }}
+
+    async function postDashboardState(payload, allowRetry = true) {{
+      const apiUrl = getDashboardStateApiUrl();
+      if (!apiUrl) return null;
+      const headers = {{
+        'Content-Type': 'application/json',
+      }};
+      const adminToken = getDashboardAdminToken();
+      if (adminToken) {{
+        headers['X-Dashboard-Admin-Token'] = adminToken;
+      }}
+      let response = await fetch(apiUrl, {{
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }});
+      if (response.status === 401 && allowRetry) {{
+        const promptedToken = await requestDashboardAdminToken();
+        if (promptedToken) {{
+          headers['X-Dashboard-Admin-Token'] = promptedToken;
+          response = await fetch(apiUrl, {{
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+          }});
+        }}
+      }}
+      if (!response.ok) {{
+        const detail = await response.text();
+        throw new Error(`Dashboard state sync failed: ${{response.status}} ${{detail}}`);
+      }}
+      return response.json();
+    }}
+
+    function queueDashboardStateSync(payload = buildDashboardStatePayload()) {{
+      const apiUrl = getDashboardStateApiUrl();
+      if (!apiUrl) return Promise.resolve(null);
+      dashboardStateSyncPromise = dashboardStateSyncPromise
+        .catch(() => null)
+        .then(() => postDashboardState(payload))
+        .then(data => {{
+          if (data && typeof data === 'object') {{
+            applyRemoteDashboardState(data);
+          }}
+          return data;
+        }})
+        .catch(error => {{
+          console.warn(error);
+          return null;
+        }});
+      return dashboardStateSyncPromise;
+    }}
+
+    async function bootstrapDashboardState() {{
+      const apiUrl = getDashboardStateApiUrl();
+      if (!apiUrl || dashboardStateBootstrapped) return;
+      dashboardStateBootstrapped = true;
+      try {{
+        const response = await fetch(apiUrl, {{
+          method: 'GET',
+          headers: {{ Accept: 'application/json' }},
+        }});
+        if (!response.ok) {{
+          throw new Error(`Dashboard state bootstrap failed: ${{response.status}}`);
+        }}
+        const payload = await response.json();
+        if (payload && typeof payload === 'object') {{
+          applyRemoteDashboardState(payload);
+        }}
+      }} catch (error) {{
+        console.warn(error);
+      }}
+    }}
+
     function renderReportTargetCell(target) {{
       const display = escapeHtml(target);
       const matchedCode = modalCodeByAlias[normalizeModalAlias(target)];
@@ -5238,6 +5404,7 @@ def build_html(
         setSelectVisualState(select);
         saveWatchlistStatus(watchlistStatusMap);
         applyWatchlistVisibility();
+        queueDashboardStateSync();
       }});
     }}
 
@@ -5435,6 +5602,7 @@ def build_html(
         setSelectVisualState(select);
         saveStrongJoinStatus(strongJoinMap);
         syncSyntheticWatchlistRows();
+        queueDashboardStateSync();
       }});
     }});
 
@@ -5485,6 +5653,7 @@ def build_html(
       reportDateInput.value = pickedDate;
       renderReportEntries();
       syncSyntheticWatchlistRows();
+      queueDashboardStateSync();
     }});
 
     reportTableBody.addEventListener('click', event => {{
@@ -5500,6 +5669,30 @@ def build_html(
     updateWatchlistSortIndicators();
     applyWatchlistSort();
     renderReportEntries();
+    window.StockKillerDashboard = {{
+      setStateApiUrl(url) {{
+        const normalized = String(url || '').trim();
+        if (normalized) {{
+          window.localStorage.setItem(DASHBOARD_STATE_API_KEY, normalized);
+        }} else {{
+          window.localStorage.removeItem(DASHBOARD_STATE_API_KEY);
+        }}
+      }},
+      setAdminToken(token) {{
+        setDashboardAdminToken(token);
+      }},
+      clearAdminToken() {{
+        setDashboardAdminToken('');
+      }},
+      syncNow() {{
+        return queueDashboardStateSync();
+      }},
+      refreshRemoteState() {{
+        dashboardStateBootstrapped = false;
+        return bootstrapDashboardState();
+      }},
+    }};
+    bootstrapDashboardState();
     const savedTheme = window.localStorage.getItem(DASHBOARD_THEME_KEY);
     applyTheme(savedTheme || 'dark');
     const savedView = window.localStorage.getItem(DASHBOARD_VIEW_KEY);
