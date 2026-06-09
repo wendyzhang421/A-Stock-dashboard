@@ -5152,6 +5152,14 @@ def build_html(
       return token;
     }}
 
+    async function ensureDashboardAdminToken() {{
+      const apiUrl = getDashboardStateApiUrl();
+      if (!apiUrl) return '';
+      const existing = getDashboardAdminToken();
+      if (existing) return existing;
+      return requestDashboardAdminToken();
+    }}
+
     function applyRemoteDashboardState(payload) {{
       const nextWatchlistStatus = normalizeWatchlistStatusPayload(payload?.watchlistStatus || {{}});
       const nextStrongJoinStatus = normalizeStrongJoinPayload(payload?.strongJoinStatus || {{}});
@@ -5200,12 +5208,19 @@ def build_html(
       return response.json();
     }}
 
-    function queueDashboardStateSync(payload = buildDashboardStatePayload()) {{
+    function queueDashboardStateSync(payload = buildDashboardStatePayload(), options = {{}}) {{
       const apiUrl = getDashboardStateApiUrl();
       if (!apiUrl) return Promise.resolve(null);
+      const promptForToken = options.promptForToken === true;
       dashboardStateSyncPromise = dashboardStateSyncPromise
         .catch(() => null)
-        .then(() => postDashboardState(payload))
+        .then(async () => {{
+          if (promptForToken) {{
+            const token = await ensureDashboardAdminToken();
+            if (!token) return null;
+          }}
+          return postDashboardState(payload);
+        }})
         .then(data => {{
           if (data && typeof data === 'object') {{
             applyRemoteDashboardState(data);
@@ -5404,7 +5419,7 @@ def build_html(
         setSelectVisualState(select);
         saveWatchlistStatus(watchlistStatusMap);
         applyWatchlistVisibility();
-        queueDashboardStateSync();
+        queueDashboardStateSync(undefined, {{ promptForToken: true }});
       }});
     }}
 
@@ -5602,7 +5617,7 @@ def build_html(
         setSelectVisualState(select);
         saveStrongJoinStatus(strongJoinMap);
         syncSyntheticWatchlistRows();
-        queueDashboardStateSync();
+        queueDashboardStateSync(undefined, {{ promptForToken: true }});
       }});
     }});
 
@@ -5653,7 +5668,7 @@ def build_html(
       reportDateInput.value = pickedDate;
       renderReportEntries();
       syncSyntheticWatchlistRows();
-      queueDashboardStateSync();
+      queueDashboardStateSync(undefined, {{ promptForToken: true }});
     }});
 
     reportTableBody.addEventListener('click', event => {{
