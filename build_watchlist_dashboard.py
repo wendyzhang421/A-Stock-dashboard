@@ -150,6 +150,12 @@ def load_research_report_entries() -> list[dict]:
                 "id": str(item.get("id") or f"report-{idx}"),
                 "target": target,
                 "content": content,
+                "summary": str(item.get("summary") or content),
+                "rawText": str(item.get("rawText") or item.get("content") or ""),
+                "stance": str(item.get("stance") or ""),
+                "tags": [str(tag).strip() for tag in (item.get("tags") or []) if str(tag).strip()][:8],
+                "catalysts": [str(line).strip() for line in (item.get("catalysts") or []) if str(line).strip()][:6],
+                "risks": [str(line).strip() for line in (item.get("risks") or []) if str(line).strip()][:6],
                 "date": str(item.get("date") or ""),
                 "createdAt": int(item.get("createdAt") or idx),
             }
@@ -4032,6 +4038,12 @@ def build_html(
       font-size: 12px;
       color: var(--muted);
     }}
+    .report-action-note[data-state="busy"] {{
+      color: var(--accent-2);
+    }}
+    .report-action-note[data-state="error"] {{
+      color: #f89b9b;
+    }}
     .report-save-button {{
       border: none;
       border-radius: var(--radius-chip);
@@ -4045,6 +4057,57 @@ def build_html(
     }}
     .report-save-button:hover {{
       filter: brightness(1.02);
+    }}
+    .report-tags {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .report-tag {{
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      font-size: 11px;
+      color: var(--accent);
+      border: 1px solid rgba(83,242,229,0.16);
+      background: rgba(83,242,229,0.08);
+      clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+    }}
+    body[data-theme="light"] .report-tag {{
+      color: #0f6f78;
+      background: rgba(0,127,140,0.08);
+      border-color: rgba(0,127,140,0.16);
+    }}
+    .report-summary {{
+      display: grid;
+      gap: 6px;
+    }}
+    .report-summary strong {{
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    .report-summary p {{
+      margin: 0;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }}
+    .report-stance {{
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 2px 8px;
+      font-size: 11px;
+      border: 1px solid rgba(132,217,255,0.18);
+      color: var(--accent-2);
+      background: rgba(132,217,255,0.08);
+    }}
+    .report-list-lines {{
+      margin: 0;
+      padding-left: 16px;
+      display: grid;
+      gap: 4px;
+      line-height: 1.45;
     }}
     .report-target-trigger {{
       display: inline-flex;
@@ -4528,36 +4591,32 @@ def build_html(
         <div class="meta">
           <span>更新日期：{AS_OF.isoformat()}</span>
           <span>默认日期：{AS_OF.isoformat()}</span>
-          <span>保存方式：当前浏览器本地存储</span>
+          <span>处理方式：GPT提取后结构化保存</span>
         </div>
         <div class="notice-banner institution-note">
-          在这里手动录入投研内容。保存后会在下方生成表格，并保存在当前浏览器本地。
+          在这里粘贴投研原文、纪要或观点摘要。系统会自动提取标的、标签、核心结论、催化与风险，并按结构化表格保存。
         </div>
       </section>
       <section class="report-entry-panel">
         <div class="report-form-grid">
           <div class="report-field">
-            <label for="report-target-input">标的名称</label>
-            <input id="report-target-input" class="report-input" type="text" placeholder="例如：海光信息 / 科创50" />
-          </div>
-          <div class="report-field">
             <label for="report-date-input">日期</label>
             <input id="report-date-input" class="report-input" type="date" value="{AS_OF.isoformat()}" />
           </div>
           <div class="report-field full-span">
-            <label for="report-content-input">内容</label>
-            <textarea id="report-content-input" class="report-textarea" placeholder="输入投研摘要、核心观点、会议纪要或跟踪结论"></textarea>
+            <label for="report-content-input">原文输入</label>
+            <textarea id="report-content-input" class="report-textarea" placeholder="粘贴投研报告、会议纪要、群聊观点或自己整理的文字内容，系统会自动提取标的和关键信息"></textarea>
           </div>
         </div>
         <div class="report-actions">
-          <span class="report-action-note">保存后按日期倒序展示，刷新页面后仍保留。</span>
-          <button id="report-save-button" class="report-save-button" type="button">保存到表格</button>
+          <span class="report-action-note" id="report-action-note">提取完成后按日期倒序展示，并同步到云端状态。</span>
+          <button id="report-save-button" class="report-save-button" type="button">GPT提取并保存</button>
         </div>
       </section>
       <div class="section-head">
         <div>
           <h2>录入结果</h2>
-          <p>手动保存的投研内容会显示在这里</p>
+          <p>系统会按标的、标签和关键信息结构化展示</p>
         </div>
         <span class="pill" id="report-count-pill">共 0 条</span>
       </div>
@@ -4567,8 +4626,11 @@ def build_html(
             <tr>
               <th>编号</th>
               <th>标的名称</th>
+              <th>标签</th>
               <th>日期</th>
-              <th>内容</th>
+              <th>核心提取</th>
+              <th>催化</th>
+              <th>风险</th>
             </tr>
           </thead>
           <tbody id="report-table-body"></tbody>
@@ -4839,13 +4901,13 @@ def build_html(
     const modalSubtitle = document.getElementById('modal-subtitle');
     const modalChartNode = document.getElementById('modal-chart');
     const stockSearch = document.getElementById('stock-search');
-    const reportTargetInput = document.getElementById('report-target-input');
     const reportDateInput = document.getElementById('report-date-input');
     const reportContentInput = document.getElementById('report-content-input');
     const reportSaveButton = document.getElementById('report-save-button');
     const reportTableBody = document.getElementById('report-table-body');
     const reportEmptyState = document.getElementById('report-empty-state');
     const reportCountPill = document.getElementById('report-count-pill');
+    const reportActionNote = document.getElementById('report-action-note');
     const strongStocksTableBody = document.getElementById('strong-stocks-table-body');
     const watchlistTableBody = document.getElementById('watchlist-table-body');
     const removedPanel = document.getElementById('removed-panel');
@@ -4886,6 +4948,7 @@ def build_html(
     const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v1';
     const DASHBOARD_STATE_API_KEY = 'astock_dashboard_state_api_url_v1';
     const DASHBOARD_ADMIN_TOKEN_KEY = 'astock_dashboard_admin_token_v1';
+    const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
     const INITIAL_WATCHLIST_STATUS = {json.dumps(initial_watchlist_status, ensure_ascii=False)};
     const INITIAL_STRONG_JOIN_STATUS = {json.dumps(initial_strong_join_status, ensure_ascii=False)};
     const INITIAL_REPORT_ENTRIES = {json.dumps(initial_report_entries, ensure_ascii=False)};
@@ -4896,18 +4959,33 @@ def build_html(
       }}
       return '';
     }})();
+    const DEFAULT_REPORT_ANALYZE_API = DEFAULT_DASHBOARD_STATE_API
+      ? DEFAULT_DASHBOARD_STATE_API.replace('/dashboard-state', '/report-analyze')
+      : '';
     let dashboardStateSyncPromise = Promise.resolve();
     let dashboardStateBootstrapped = false;
 
     function normalizeReportEntry(entry, fallbackId) {{
       if (!entry || typeof entry !== 'object') return null;
       const target = String(entry.target || '').trim();
-      const content = String(entry.content || '').trim();
+      const content = String(entry.content || entry.summary || '').trim();
       if (!target || !content) return null;
       const date = String(entry.date || '');
       const createdAt = Number(entry.createdAt || Date.now());
       const id = String(entry.id || fallbackId || `${{target}}-${{date}}-${{createdAt}}`);
-      return {{ id, target, content, date, createdAt }};
+      return {{
+        id,
+        target,
+        content,
+        summary: String(entry.summary || content).trim(),
+        rawText: String(entry.rawText || entry.content || '').trim(),
+        stance: String(entry.stance || '').trim(),
+        tags: Array.isArray(entry.tags) ? entry.tags.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 8) : [],
+        catalysts: Array.isArray(entry.catalysts) ? entry.catalysts.map(line => String(line || '').trim()).filter(Boolean).slice(0, 6) : [],
+        risks: Array.isArray(entry.risks) ? entry.risks.map(line => String(line || '').trim()).filter(Boolean).slice(0, 6) : [],
+        date,
+        createdAt,
+      }};
     }}
 
     function mergeReportEntries(baseEntries, overlayEntries) {{
@@ -4922,6 +5000,10 @@ def build_html(
 
     function getDashboardStateApiUrl() {{
       return window.localStorage.getItem(DASHBOARD_STATE_API_KEY) || DEFAULT_DASHBOARD_STATE_API;
+    }}
+
+    function getReportAnalyzeApiUrl() {{
+      return window.localStorage.getItem(DASHBOARD_ANALYZE_API_KEY) || DEFAULT_REPORT_ANALYZE_API;
     }}
 
     function getDashboardAdminToken() {{
@@ -5137,6 +5219,15 @@ def build_html(
       window.localStorage.setItem(REPORT_ENTRIES_KEY, JSON.stringify(entries));
     }}
 
+    function setReportActionNote(message, state = '') {{
+      reportActionNote.textContent = message;
+      if (state) {{
+        reportActionNote.dataset.state = state;
+      }} else {{
+        delete reportActionNote.dataset.state;
+      }}
+    }}
+
     function buildDashboardStatePayload() {{
       return {{
         watchlistStatus: normalizeWatchlistStatusPayload(watchlistStatusMap),
@@ -5253,6 +5344,35 @@ def build_html(
       }} catch (error) {{
         console.warn(error);
       }}
+    }}
+
+    async function analyzeResearchText(rawText, pickedDate) {{
+      const apiUrl = getReportAnalyzeApiUrl();
+      if (!apiUrl) {{
+        throw new Error('未配置投研分析接口');
+      }}
+      const token = await ensureDashboardAdminToken();
+      if (!token) {{
+        throw new Error('缺少 Dashboard admin token');
+      }}
+      const response = await fetch(apiUrl, {{
+        method: 'POST',
+        headers: {{
+          'Content-Type': 'application/json',
+          'X-Dashboard-Admin-Token': token,
+        }},
+        body: JSON.stringify({{ text: rawText, date: pickedDate }}),
+      }});
+      const payload = await response.json().catch(() => ({{}}));
+      if (!response.ok) {{
+        throw new Error(payload?.detail || payload?.error || `分析失败: ${{response.status}}`);
+      }}
+      return normalizeReportEntry({{
+        ...(payload.analysis || {{}}),
+        date: payload?.analysis?.date || pickedDate,
+        rawText: payload?.analysis?.rawText || rawText,
+        createdAt: Date.now(),
+      }}, `report-${{Date.now()}}`);
     }}
 
     function renderReportTargetCell(target) {{
@@ -5556,8 +5676,16 @@ def build_html(
         <tr>
           <td class="index-cell">${{index + 1}}</td>
           <td>${{renderReportTargetCell(entry.target)}}</td>
+          <td>${{entry.tags?.length ? `<div class="report-tags">${{entry.tags.map(tag => `<span class="report-tag">${{escapeHtml(tag)}}</span>`).join('')}}</div>` : '-'}}</td>
           <td class="nowrap-cell">${{escapeHtml(entry.date)}}</td>
-          <td style="white-space: pre-wrap;">${{escapeHtml(entry.content)}}</td>
+          <td>
+            <div class="report-summary">
+              ${{entry.stance ? `<span class="report-stance">${{escapeHtml(entry.stance)}}</span>` : ''}}
+              <p>${{escapeHtml(entry.summary || entry.content)}}</p>
+            </div>
+          </td>
+          <td>${{entry.catalysts?.length ? `<ul class="report-list-lines">${{entry.catalysts.map(line => `<li>${{escapeHtml(line)}}</li>`).join('')}}</ul>` : '-'}}</td>
+          <td>${{entry.risks?.length ? `<ul class="report-list-lines">${{entry.risks.map(line => `<li>${{escapeHtml(line)}}</li>`).join('')}}</ul>` : '-'}}</td>
         </tr>
       `).join('');
     }}
@@ -5647,28 +5775,36 @@ def build_html(
       renumberTableRows();
     }});
 
-    reportSaveButton.addEventListener('click', () => {{
-      const target = reportTargetInput.value.trim();
-      const content = reportContentInput.value.trim();
+    reportSaveButton.addEventListener('click', async () => {{
+      const rawText = reportContentInput.value.trim();
       const pickedDate = reportDateInput.value || '{AS_OF.isoformat()}';
-      if (!target || !content) {{
-        window.alert('请先填写标的名称和内容。');
+      if (!rawText) {{
+        window.alert('请先粘贴需要提取的投研内容。');
         return;
       }}
-      const entries = loadReportEntries();
-      entries.push({{
-        target,
-        content,
-        date: pickedDate,
-        createdAt: Date.now()
-      }});
-      saveReportEntries(entries);
-      reportTargetInput.value = '';
-      reportContentInput.value = '';
-      reportDateInput.value = pickedDate;
-      renderReportEntries();
-      syncSyntheticWatchlistRows();
-      queueDashboardStateSync(undefined, {{ promptForToken: true }});
+      const originalLabel = reportSaveButton.textContent;
+      reportSaveButton.disabled = true;
+      reportSaveButton.textContent = '提取中...';
+      setReportActionNote('GPT 正在提取关键信息并保存到表格...', 'busy');
+      try {{
+        const analyzedEntry = await analyzeResearchText(rawText, pickedDate);
+        const entries = loadReportEntries();
+        entries.push(analyzedEntry);
+        saveReportEntries(entries);
+        reportContentInput.value = '';
+        reportDateInput.value = pickedDate;
+        renderReportEntries();
+        syncSyntheticWatchlistRows();
+        await queueDashboardStateSync(undefined, {{ promptForToken: false }});
+        setReportActionNote(`已提取并保存：${{analyzedEntry.target}}`, '');
+      }} catch (error) {{
+        console.error(error);
+        setReportActionNote(error?.message || '提取失败，请稍后重试。', 'error');
+        window.alert(error?.message || '投研内容提取失败，请稍后重试。');
+      }} finally {{
+        reportSaveButton.disabled = false;
+        reportSaveButton.textContent = originalLabel;
+      }}
     }});
 
     reportTableBody.addEventListener('click', event => {{
@@ -5691,6 +5827,14 @@ def build_html(
           window.localStorage.setItem(DASHBOARD_STATE_API_KEY, normalized);
         }} else {{
           window.localStorage.removeItem(DASHBOARD_STATE_API_KEY);
+        }}
+      }},
+      setAnalyzeApiUrl(url) {{
+        const normalized = String(url || '').trim();
+        if (normalized) {{
+          window.localStorage.setItem(DASHBOARD_ANALYZE_API_KEY, normalized);
+        }} else {{
+          window.localStorage.removeItem(DASHBOARD_ANALYZE_API_KEY);
         }}
       }},
       setAdminToken(token) {{

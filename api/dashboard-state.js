@@ -52,12 +52,24 @@ function sanitizeReports(payload) {
     .map((item, index) => {
       if (!item || typeof item !== "object") return null;
       const target = String(item.target || "").trim();
-      const content = String(item.content || "").trim();
+      const content = String(item.content || item.summary || "").trim();
       if (!target || !content) return null;
       const date = String(item.date || "").trim();
       const createdAt = Number(item.createdAt || Date.now());
       const id = String(item.id || `report-${index + 1}-${createdAt}`);
-      return { id, target, content, date, createdAt };
+      const summary = String(item.summary || content).trim();
+      const rawText = String(item.rawText || item.content || "").trim();
+      const stance = String(item.stance || "").trim();
+      const tags = Array.isArray(item.tags)
+        ? item.tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 8)
+        : [];
+      const catalysts = Array.isArray(item.catalysts)
+        ? item.catalysts.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 6)
+        : [];
+      const risks = Array.isArray(item.risks)
+        ? item.risks.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 6)
+        : [];
+      return { id, target, content, summary, rawText, stance, tags, catalysts, risks, date, createdAt };
     })
     .filter(Boolean);
 }

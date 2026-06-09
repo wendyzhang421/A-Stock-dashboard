@@ -4,12 +4,20 @@
     {
       "src": "api/dashboard-state.js",
       "use": "@vercel/node@5.3.24"
+    },
+    {
+      "src": "api/report-analyze.js",
+      "use": "@vercel/node@5.3.24"
     }
   ],
   "routes": [
     {
       "src": "/api/dashboard-state",
       "dest": "api/dashboard-state.js"
+    },
+    {
+      "src": "/api/report-analyze",
+      "dest": "api/report-analyze.js"
     }
   ]
 }
