@@ -1,5 +1,8 @@
 {
-  "watchlistStatus": {},
+  "watchlistStatus": {
+    "002730.SZ": "removed",
+    "688307.SH": "removed"
+  },
   "strongJoinStatus": {},
-  "updatedAt": "2026-06-09T09:24:10.882Z"
+  "updatedAt": "2026-06-09T09:27:42.822Z"
 }
