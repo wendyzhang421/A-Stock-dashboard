@@ -52,6 +52,141 @@ function sanitizeAnalysis(payload, rawText, fallbackDate) {
   };
 }
 
+function getJsonFromText(text) {
+  const cleaned = String(text || "").trim();
+  if (!cleaned) {
+    throw new Error("Model returned empty output");
+  }
+  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : cleaned;
+  return JSON.parse(candidate);
+}
+
+async function callOpenAI({ apiKey, model, rawText }) {
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["target", "summary", "tags", "catalysts", "risks", "stance"],
+    properties: {
+      target: { type: "string", description: "报告核心标的名称，尽量使用中文证券简称" },
+      date: { type: "string", description: "若原文中出现报告日期则提取，否则留空" },
+      summary: { type: "string", description: "用中文提炼3句内的核心结论" },
+      stance: {
+        type: "string",
+        enum: ["偏多", "中性", "偏谨慎"],
+        description: "根据原文语气给出简短判断",
+      },
+      tags: {
+        type: "array",
+        items: { type: "string" },
+        description: "3到6个简洁标签，例如 算力/CPO/业绩弹性",
+      },
+      catalysts: {
+        type: "array",
+        items: { type: "string" },
+        description: "最多3条潜在催化",
+      },
+      risks: {
+        type: "array",
+        items: { type: "string" },
+        description: "最多3条风险提示",
+      },
+    },
+  };
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "你是A股投研助理。请从用户粘贴的投研原文中提取结构化关键信息。输出必须符合JSON schema。不要编造不存在的信息，无法确认就留空或给空数组。标签尽量贴近A股交易语境。",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: rawText,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "research_report_extract",
+          schema,
+          strict: true,
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${text}`);
+  }
+
+  const payload = await response.json();
+  const text = extractResponseText(payload);
+  if (!text) {
+    throw new Error("OpenAI returned empty output");
+  }
+  return getJsonFromText(text);
+}
+
+async function callCompatibleChat({ baseUrl, apiKey, model, rawText, providerLabel }) {
+  const systemPrompt = [
+    "你是A股投研助理。",
+    "请从用户粘贴的投研原文中提取结构化关键信息。",
+    "不要编造不存在的信息，无法确认就留空或给空数组。",
+    "标签尽量贴近A股交易语境。",
+    "只输出一个JSON对象，不要输出任何额外说明。",
+    'JSON结构必须为：{"target":"","date":"","summary":"","stance":"偏多|中性|偏谨慎","tags":[],"catalysts":[],"risks":[]}',
+  ].join("");
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: rawText },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${providerLabel} request failed: ${response.status} ${text}`);
+  }
+
+  const payload = await response.json();
+  const text = String(payload?.choices?.[0]?.message?.content || "").trim();
+  if (!text) {
+    throw new Error(`${providerLabel} returned empty output`);
+  }
+  return getJsonFromText(text);
+}
+
 module.exports = async (req, res) => {
   setCors(res);
   if (req.method === "OPTIONS") {
@@ -71,11 +206,6 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
-    if (!apiKey) {
-      throw new Error("Missing OPENAI_API_KEY");
-    }
-
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     const rawText = String(body.text || "").trim();
     const date = String(body.date || "").trim();
@@ -84,89 +214,34 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const model = String(process.env.OPENAI_MODEL || "gpt-5-mini").trim();
-    const schema = {
-      type: "object",
-      additionalProperties: false,
-      required: ["target", "summary", "tags", "catalysts", "risks", "stance"],
-      properties: {
-        target: { type: "string", description: "报告核心标的名称，尽量使用中文证券简称" },
-        date: { type: "string", description: "若原文中出现报告日期则提取，否则留空" },
-        summary: { type: "string", description: "用中文提炼3句内的核心结论" },
-        stance: {
-          type: "string",
-          enum: ["偏多", "中性", "偏谨慎"],
-          description: "根据原文语气给出简短判断",
-        },
-        tags: {
-          type: "array",
-          items: { type: "string" },
-          description: "3到6个简洁标签，例如 算力/CPO/业绩弹性",
-        },
-        catalysts: {
-          type: "array",
-          items: { type: "string" },
-          description: "最多3条潜在催化",
-        },
-        risks: {
-          type: "array",
-          items: { type: "string" },
-          description: "最多3条风险提示",
-        },
-      },
-    };
+    const provider = String(process.env.LLM_PROVIDER || "openai").trim().toLowerCase();
+    const model = String(process.env.LLM_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini").trim();
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    let structured;
+    if (provider === "deepseek") {
+      const apiKey = String(
+        process.env.DEEPSEEK_API_KEY || process.env.LLM_API_KEY || ""
+      ).trim();
+      if (!apiKey) {
+        throw new Error("Missing DEEPSEEK_API_KEY");
+      }
+      const baseUrl = String(process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").trim();
+      structured = await callCompatibleChat({
+        baseUrl,
+        apiKey,
         model,
-        input: [
-          {
-            role: "system",
-            content: [
-              {
-                type: "input_text",
-                text:
-                  "你是A股投研助理。请从用户粘贴的投研原文中提取结构化关键信息。输出必须符合JSON schema。不要编造不存在的信息，无法确认就留空或给空数组。标签尽量贴近A股交易语境。",
-              },
-            ],
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: rawText,
-              },
-            ],
-          },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "research_report_extract",
-            schema,
-            strict: true,
-          },
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`OpenAI request failed: ${response.status} ${text}`);
+        rawText,
+        providerLabel: "DeepSeek",
+      });
+    } else {
+      const apiKey = String(process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "").trim();
+      if (!apiKey) {
+        throw new Error("Missing OPENAI_API_KEY");
+      }
+      structured = await callOpenAI({ apiKey, model, rawText });
     }
 
-    const payload = await response.json();
-    const text = extractResponseText(payload);
-    if (!text) {
-      throw new Error("OpenAI returned empty output");
-    }
-    const analysis = sanitizeAnalysis(JSON.parse(text), rawText, date);
+    const analysis = sanitizeAnalysis(structured, rawText, date);
     sendJson(res, 200, { analysis });
   } catch (error) {
     sendJson(res, 500, {

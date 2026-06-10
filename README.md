@@ -281,15 +281,21 @@ GITHUB_TOKEN=你的 GitHub PAT（需要仓库写权限）
 GITHUB_REPO=wendyzhang421/A-Stock-dashboard
 GITHUB_BRANCH=main
 DASHBOARD_ADMIN_TOKEN=你自己设置的一串管理口令
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5-mini
 OPENAI_API_KEY=你的 OpenAI API Key
-OPENAI_MODEL=gpt-5-mini
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```
 
 说明：
 
 - `GITHUB_TOKEN` 用来把网页端修改写回仓库 JSON
 - `DASHBOARD_ADMIN_TOKEN` 用来保护写接口，避免任何访客都能改你的自选/报告
-- `OPENAI_API_KEY` / `OPENAI_MODEL` 用来支持投研报告的 GPT 提取接口
+- `LLM_PROVIDER` 支持 `openai` 或 `deepseek`
+- `LLM_MODEL` 是当前提取模型名，例如 `gpt-5-mini` 或 `deepseek-v4-flash`
+- `OPENAI_API_KEY` 用于 `LLM_PROVIDER=openai`
+- `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` 用于 `LLM_PROVIDER=deepseek`
 
 ### 前端如何工作
 
