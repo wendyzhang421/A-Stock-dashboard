@@ -3,6 +3,7 @@ const path = require("path");
 
 const WATCHLIST_STATE_PATH = "reports/watchlist_state.json";
 const RESEARCH_REPORTS_PATH = "reports/research_reports.json";
+const SOCIAL_MEDIA_POSTS_PATH = "reports/social_media_posts.json";
 
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -70,6 +71,50 @@ function sanitizeReports(payload) {
         ? item.risks.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 6)
         : [];
       return { id, target, content, summary, rawText, stance, tags, catalysts, risks, date, createdAt };
+    })
+    .filter(Boolean);
+}
+
+function sanitizeSocialPosts(payload) {
+  if (!Array.isArray(payload)) return [];
+  return payload
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const kol = String(item.kol || item.source || "").trim();
+      const target = String(item.target || "").trim();
+      const content = String(item.content || item.summary || "").trim();
+      if (!kol || !target || !content) return null;
+      const date = String(item.date || "").trim();
+      const createdAt = Number(item.createdAt || Date.now());
+      const id = String(item.id || `social-${index + 1}-${createdAt}`);
+      const summary = String(item.summary || content).trim();
+      const rawText = String(item.rawText || item.content || "").trim();
+      const stance = String(item.stance || "").trim();
+      const platform = String(item.platform || "X / Grok").trim();
+      const tags = Array.isArray(item.tags)
+        ? item.tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 8)
+        : [];
+      const catalysts = Array.isArray(item.catalysts)
+        ? item.catalysts.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 6)
+        : [];
+      const risks = Array.isArray(item.risks)
+        ? item.risks.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 6)
+        : [];
+      return {
+        id,
+        kol,
+        platform,
+        target,
+        content,
+        summary,
+        rawText,
+        stance,
+        tags,
+        catalysts,
+        risks,
+        date,
+        createdAt,
+      };
     })
     .filter(Boolean);
 }
@@ -161,14 +206,20 @@ async function loadStateBundle() {
     updatedAt: "",
   });
   const reports = await readRepoJson(RESEARCH_REPORTS_PATH, []);
+  const socialPosts = await readRepoJson(SOCIAL_MEDIA_POSTS_PATH, []);
   return {
     watchlistStatus: sanitizeWatchlistStatus(watch.data.watchlistStatus || {}),
     strongJoinStatus: sanitizeStrongJoinStatus(watch.data.strongJoinStatus || {}),
     reports: sanitizeReports(reports.data),
+    socialPosts: sanitizeSocialPosts(socialPosts.data),
     updatedAt: String(watch.data.updatedAt || ""),
     watchlistSha: watch.sha,
     reportsSha: reports.sha,
-    source: watch.source === "github" || reports.source === "github" ? "github" : "local",
+    socialSha: socialPosts.sha,
+    source:
+      watch.source === "github" || reports.source === "github" || socialPosts.source === "github"
+        ? "github"
+        : "local",
   };
 }
 
@@ -209,6 +260,9 @@ module.exports = async (req, res) => {
     const nextReports = Object.prototype.hasOwnProperty.call(body, "reports")
       ? sanitizeReports(body.reports)
       : current.reports;
+    const nextSocialPosts = Object.prototype.hasOwnProperty.call(body, "socialPosts")
+      ? sanitizeSocialPosts(body.socialPosts)
+      : current.socialPosts;
     const updatedAt = new Date().toISOString();
 
     const watchPayload = {
@@ -228,11 +282,18 @@ module.exports = async (req, res) => {
       `Update dashboard research reports ${updatedAt}`,
       current.reportsSha
     );
+    await writeRepoJson(
+      SOCIAL_MEDIA_POSTS_PATH,
+      nextSocialPosts,
+      `Update dashboard social posts ${updatedAt}`,
+      current.socialSha
+    );
 
     sendJson(res, 200, {
       watchlistStatus: nextWatchlistStatus,
       strongJoinStatus: nextStrongJoinStatus,
       reports: nextReports,
+      socialPosts: nextSocialPosts,
       updatedAt,
       source: "github",
     });

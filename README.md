@@ -286,6 +286,8 @@ LLM_MODEL=gpt-5-mini
 OPENAI_API_KEY=你的 OpenAI API Key
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
+XAI_API_KEY=你的 xAI / Grok API Key
+XAI_MODEL=grok-3-mini
 ```
 
 说明：
@@ -296,6 +298,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 - `LLM_MODEL` 是当前提取模型名，例如 `gpt-5-mini` 或 `deepseek-v4-flash`
 - `OPENAI_API_KEY` 用于 `LLM_PROVIDER=openai`
 - `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` 用于 `LLM_PROVIDER=deepseek`
+- `XAI_API_KEY` / `XAI_MODEL` 用于社交媒体观点提取接口
 
 ### 前端如何工作
 
