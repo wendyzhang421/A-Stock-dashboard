@@ -3,6 +3,12 @@
     "id": "report-1",
     "target": "澜起科技",
     "content": "test",
+    "summary": "test",
+    "rawText": "test",
+    "stance": "",
+    "tags": [],
+    "catalysts": [],
+    "risks": [],
     "date": "2026-06-09",
     "createdAt": 1781002020707
   }
