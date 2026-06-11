@@ -34,20 +34,18 @@ function normalizeList(values, limit) {
 }
 
 function sanitizeAnalysis(payload, rawText, fallbackDate) {
-  const target = String(payload?.target || "").trim();
   const summary = String(payload?.summary || "").trim();
-  if (!target || !summary) {
-    throw new Error("Model output missing target or summary");
+  const industry = String(payload?.industry || "").trim();
+  const targets = normalizeList(payload?.targets, 12);
+  if (!summary || !industry) {
+    throw new Error("Model output missing summary or industry");
   }
   return {
-    target,
     date: String(payload?.date || fallbackDate || "").trim(),
+    industry,
     summary,
     rawText: String(rawText || "").trim(),
-    stance: String(payload?.stance || "").trim(),
-    tags: normalizeList(payload?.tags, 8),
-    catalysts: normalizeList(payload?.catalysts, 6),
-    risks: normalizeList(payload?.risks, 6),
+    targets,
     content: summary,
   };
 }
@@ -66,30 +64,15 @@ async function callOpenAI({ apiKey, model, rawText }) {
   const schema = {
     type: "object",
     additionalProperties: false,
-    required: ["target", "summary", "tags", "catalysts", "risks", "stance"],
+    required: ["summary", "industry", "targets"],
     properties: {
-      target: { type: "string", description: "报告核心标的名称，尽量使用中文证券简称" },
       date: { type: "string", description: "若原文中出现报告日期则提取，否则留空" },
-      summary: { type: "string", description: "用中文提炼3句内的核心结论" },
-      stance: {
-        type: "string",
-        enum: ["偏多", "中性", "偏谨慎"],
-        description: "根据原文语气给出简短判断",
-      },
-      tags: {
+      industry: { type: "string", description: "报告对应的行业或细分方向，例如 存储/光模块/机器人减速器" },
+      summary: { type: "string", description: "用中文提炼五句话以内的核心观点" },
+      targets: {
         type: "array",
         items: { type: "string" },
-        description: "3到6个简洁标签，例如 算力/CPO/业绩弹性",
-      },
-      catalysts: {
-        type: "array",
-        items: { type: "string" },
-        description: "最多3条潜在催化",
-      },
-      risks: {
-        type: "array",
-        items: { type: "string" },
-        description: "最多3条风险提示",
+        description: "文中涉及的具体标的中文简称列表，最多8个",
       },
     },
   };
@@ -109,7 +92,7 @@ async function callOpenAI({ apiKey, model, rawText }) {
             {
               type: "input_text",
               text:
-                "你是A股投研助理。请从用户粘贴的投研原文中提取结构化关键信息。输出必须符合JSON schema。不要编造不存在的信息，无法确认就留空或给空数组。标签尽量贴近A股交易语境。",
+                "你是A股投研助理。请从用户粘贴的投研原文中提取结构化关键信息。输出必须符合JSON schema。不要编造不存在的信息，无法确认就留空或给空数组。核心观点控制在五句话以内，行业请尽量细化到A股交易语境下的细分方向。",
             },
           ],
         },
@@ -152,9 +135,10 @@ async function callCompatibleChat({ baseUrl, apiKey, model, rawText, providerLab
     "你是A股投研助理。",
     "请从用户粘贴的投研原文中提取结构化关键信息。",
     "不要编造不存在的信息，无法确认就留空或给空数组。",
-    "标签尽量贴近A股交易语境。",
+    "行业请尽量贴近A股交易语境下的细分方向。",
+    "核心观点控制在五句话以内。",
     "只输出一个JSON对象，不要输出任何额外说明。",
-    'JSON结构必须为：{"target":"","date":"","summary":"","stance":"偏多|中性|偏谨慎","tags":[],"catalysts":[],"risks":[]}',
+    'JSON结构必须为：{"date":"","industry":"","summary":"","targets":[]}',
   ].join("");
 
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {

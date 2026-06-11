@@ -144,19 +144,22 @@ def load_research_report_entries() -> list[dict]:
             continue
         target = str(item.get("target") or "").strip()
         content = str(item.get("content") or "").strip()
-        if not target or not content:
+        summary = str(item.get("summary") or content).strip()
+        industry = str(item.get("industry") or "").strip()
+        targets = [str(tag).strip() for tag in (item.get("targets") or []) if str(tag).strip()][:12]
+        if not summary:
             continue
+        if not targets and target:
+            targets = [target]
         out.append(
             {
                 "id": str(item.get("id") or f"report-{idx}"),
-                "target": target,
+                "target": target or (targets[0] if targets else ""),
+                "targets": targets,
                 "content": content,
-                "summary": str(item.get("summary") or content),
+                "summary": summary,
+                "industry": industry,
                 "rawText": str(item.get("rawText") or item.get("content") or ""),
-                "stance": str(item.get("stance") or ""),
-                "tags": [str(tag).strip() for tag in (item.get("tags") or []) if str(tag).strip()][:8],
-                "catalysts": [str(line).strip() for line in (item.get("catalysts") or []) if str(line).strip()][:6],
-                "risks": [str(line).strip() for line in (item.get("risks") or []) if str(line).strip()][:6],
                 "date": str(item.get("date") or ""),
                 "createdAt": int(item.get("createdAt") or idx),
             }
@@ -4118,6 +4121,14 @@ def build_html(
       background: rgba(0,127,140,0.08);
       border-color: rgba(0,127,140,0.16);
     }}
+    .report-tag-button {{
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      cursor: pointer;
+    }}
     .report-summary {{
       display: grid;
       gap: 6px;
@@ -4635,7 +4646,7 @@ def build_html(
           <span>处理方式：GPT提取后结构化保存</span>
         </div>
         <div class="notice-banner institution-note">
-          在这里粘贴投研原文、纪要或观点摘要。系统会自动提取标的、标签、核心结论、催化与风险，并按结构化表格保存。
+          在这里粘贴投研原文、纪要或观点摘要。系统会自动提取核心观点、行业细分方向、日期，以及涉及的具体标的，并按结构化表格保存。
         </div>
       </section>
       <section class="report-entry-panel">
@@ -4657,7 +4668,7 @@ def build_html(
       <div class="section-head">
         <div>
           <h2>录入结果</h2>
-          <p>系统会按标的、标签和关键信息结构化展示</p>
+          <p>系统会按核心观点、行业和涉及标的结构化展示</p>
         </div>
         <span class="pill" id="report-count-pill">共 0 条</span>
       </div>
@@ -4666,12 +4677,9 @@ def build_html(
           <thead>
             <tr>
               <th>编号</th>
-              <th>标的名称</th>
-              <th>标签</th>
               <th>日期</th>
-              <th>核心提取</th>
-              <th>催化</th>
-              <th>风险</th>
+              <th>行业</th>
+              <th>核心观点</th>
             </tr>
           </thead>
           <tbody id="report-table-body"></tbody>
@@ -5079,22 +5087,23 @@ def build_html(
 
     function normalizeReportEntry(entry, fallbackId) {{
       if (!entry || typeof entry !== 'object') return null;
-      const target = String(entry.target || '').trim();
       const content = String(entry.content || entry.summary || '').trim();
-      if (!target || !content) return null;
+      const targets = Array.isArray(entry.targets)
+        ? entry.targets.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 12)
+        : [];
+      const target = String(entry.target || targets[0] || '').trim();
+      if (!content) return null;
       const date = String(entry.date || '');
       const createdAt = Number(entry.createdAt || Date.now());
       const id = String(entry.id || fallbackId || `${{target}}-${{date}}-${{createdAt}}`);
       return {{
         id,
         target,
+        targets: targets.length ? targets : (target ? [target] : []),
         content,
         summary: String(entry.summary || content).trim(),
+        industry: String(entry.industry || '').trim(),
         rawText: String(entry.rawText || entry.content || '').trim(),
-        stance: String(entry.stance || '').trim(),
-        tags: Array.isArray(entry.tags) ? entry.tags.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 8) : [],
-        catalysts: Array.isArray(entry.catalysts) ? entry.catalysts.map(line => String(line || '').trim()).filter(Boolean).slice(0, 6) : [],
-        risks: Array.isArray(entry.risks) ? entry.risks.map(line => String(line || '').trim()).filter(Boolean).slice(0, 6) : [],
         date,
         createdAt,
       }};
@@ -5595,6 +5604,19 @@ def build_html(
       return `<button class="report-target-trigger" type="button" data-code="${{escapeHtml(matchedCode)}}"><span class="stock-name">${{display}}</span>${{codeText}}</button>`;
     }}
 
+    function renderTargetTags(targets) {{
+      if (!Array.isArray(targets) || !targets.length) return '';
+      const html = targets.map(target => {{
+        const label = escapeHtml(target);
+        const matchedCode = modalCodeByAlias[normalizeModalAlias(target)];
+        if (!matchedCode) {{
+          return `<span class="report-tag">${{label}}</span>`;
+        }}
+        return `<button class="report-target-trigger report-tag-button" type="button" data-code="${{escapeHtml(matchedCode)}}"><span class="report-tag">${{label}}</span></button>`;
+      }}).join('');
+      return `<div class="report-tags">${{html}}</div>`;
+    }}
+
     function setSelectVisualState(select) {{
       select.dataset.state = select.value;
     }}
@@ -5783,13 +5805,16 @@ def build_html(
       const seenCodes = new Set();
       const items = [];
       entries.forEach(entry => {{
-        const matchedCode = modalCodeByAlias[normalizeModalAlias(entry.target)];
-        if (!matchedCode || seenCodes.has(matchedCode)) return;
-        const idx = modalIndexByCode[matchedCode];
-        const item = modalItems[idx];
-        if (!item) return;
-        seenCodes.add(matchedCode);
-        items.push(item);
+        const names = Array.isArray(entry.targets) && entry.targets.length ? entry.targets : [entry.target];
+        names.forEach(name => {{
+          const matchedCode = modalCodeByAlias[normalizeModalAlias(name)];
+          if (!matchedCode || seenCodes.has(matchedCode)) return;
+          const idx = modalIndexByCode[matchedCode];
+          const item = modalItems[idx];
+          if (!item) return;
+          seenCodes.add(matchedCode);
+          items.push(item);
+        }});
       }});
       return items;
     }}
@@ -5905,17 +5930,14 @@ def build_html(
       reportTableBody.innerHTML = entries.map((entry, index) => `
         <tr>
           <td class="index-cell">${{index + 1}}</td>
-          <td>${{renderReportTargetCell(entry.target)}}</td>
-          <td>${{entry.tags?.length ? `<div class="report-tags">${{entry.tags.map(tag => `<span class="report-tag">${{escapeHtml(tag)}}</span>`).join('')}}</div>` : '-'}}</td>
           <td class="nowrap-cell">${{escapeHtml(entry.date)}}</td>
+          <td>${{escapeHtml(entry.industry || '-')}}</td>
           <td>
             <div class="report-summary">
-              ${{entry.stance ? `<span class="report-stance">${{escapeHtml(entry.stance)}}</span>` : ''}}
               <p>${{escapeHtml(entry.summary || entry.content)}}</p>
+              ${{renderTargetTags(entry.targets)}}
             </div>
           </td>
-          <td>${{entry.catalysts?.length ? `<ul class="report-list-lines">${{entry.catalysts.map(line => `<li>${{escapeHtml(line)}}</li>`).join('')}}</ul>` : '-'}}</td>
-          <td>${{entry.risks?.length ? `<ul class="report-list-lines">${{entry.risks.map(line => `<li>${{escapeHtml(line)}}</li>`).join('')}}</ul>` : '-'}}</td>
         </tr>
       `).join('');
     }}
