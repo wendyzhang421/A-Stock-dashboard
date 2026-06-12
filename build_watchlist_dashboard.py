@@ -40,6 +40,7 @@ OUT_DIR.mkdir(exist_ok=True)
 WATCHLIST_STATE_PATH = OUT_DIR / "watchlist_state.json"
 RESEARCH_REPORTS_PATH = OUT_DIR / "research_reports.json"
 SOCIAL_MEDIA_POSTS_PATH = OUT_DIR / "social_media_posts.json"
+SOCIAL_KOL_WATCHLIST_PATH = OUT_DIR / "social_kol_watchlist.json"
 TRUST_ENV = os.environ.get("ASTOCK_TRUST_ENV", "1").strip().lower() not in {"0", "false", "no", "off"}
 AS_OF_OVERRIDE = os.environ.get("ASTOCK_AS_OF", "").strip()
 AS_OF = date.fromisoformat(AS_OF_OVERRIDE) if AS_OF_OVERRIDE else datetime.now(timezone(timedelta(hours=8))).date()
@@ -181,24 +182,56 @@ def load_social_media_entries() -> list[dict]:
         if not isinstance(item, dict):
             continue
         kol = str(item.get("kol") or "").strip()
-        target = str(item.get("target") or "").strip()
         content = str(item.get("content") or item.get("summary") or "").strip()
-        if not kol or not target or not content:
+        summary = str(item.get("summary") or content).strip()
+        industry = str(item.get("industry") or "").strip()
+        targets = [str(tag).strip() for tag in (item.get("targets") or []) if str(tag).strip()][:12]
+        target = str(item.get("target") or (targets[0] if targets else "")).strip()
+        if not kol or not summary:
             continue
         out.append(
             {
                 "id": str(item.get("id") or f"social-{idx}"),
                 "kol": kol,
-                "platform": str(item.get("platform") or "X / Grok"),
+                "handle": str(item.get("handle") or "").strip(),
+                "platform": str(item.get("platform") or "X"),
                 "target": target,
                 "content": content,
-                "summary": str(item.get("summary") or content),
+                "summary": summary,
+                "industry": industry,
+                "targets": targets if targets else ([target] if target else []),
                 "rawText": str(item.get("rawText") or item.get("content") or ""),
-                "stance": str(item.get("stance") or ""),
-                "tags": [str(tag).strip() for tag in (item.get("tags") or []) if str(tag).strip()][:8],
-                "catalysts": [str(line).strip() for line in (item.get("catalysts") or []) if str(line).strip()][:6],
-                "risks": [str(line).strip() for line in (item.get("risks") or []) if str(line).strip()][:6],
+                "sourceNote": str(item.get("sourceNote") or ""),
                 "date": str(item.get("date") or ""),
+                "createdAt": int(item.get("createdAt") or idx),
+            }
+        )
+    return out
+
+
+def load_social_kol_watchlist() -> list[dict]:
+    if not SOCIAL_KOL_WATCHLIST_PATH.exists():
+        return []
+    try:
+        payload = json.loads(SOCIAL_KOL_WATCHLIST_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(payload, list):
+        return []
+    out: list[dict] = []
+    for idx, item in enumerate(payload, start=1):
+        if not isinstance(item, dict):
+            continue
+        handle = str(item.get("handle") or item.get("id") or "").strip().lstrip("@")
+        if not handle:
+            continue
+        out.append(
+            {
+                "id": str(item.get("id") or f"kol-{idx}"),
+                "name": str(item.get("name") or handle),
+                "handle": handle,
+                "platform": str(item.get("platform") or "X"),
+                "enabled": bool(item.get("enabled", True)),
                 "createdAt": int(item.get("createdAt") or idx),
             }
         )
@@ -3048,6 +3081,7 @@ def build_html(
     initial_watchlist_status = watchlist_state_payload.get("watchlistStatus") or {}
     initial_strong_join_status = watchlist_state_payload.get("strongJoinStatus") or {}
     initial_report_entries = load_research_report_entries()
+    initial_social_trackers = load_social_kol_watchlist()
     initial_social_entries = load_social_media_entries()
     market_dates = sorted(
         {
@@ -4692,37 +4726,59 @@ def build_html(
         <h1>社交媒体</h1>
         <div class="meta">
           <span>更新日期：{AS_OF.isoformat()}</span>
-          <span>默认日期：{AS_OF.isoformat()}</span>
-          <span>处理方式：Grok 提取后结构化保存</span>
+          <span>自动频率：每日云端刷新</span>
+          <span>处理方式：Grok 自动追踪与总结</span>
         </div>
         <div class="notice-banner institution-note">
-          在这里粘贴头部 KOL、群聊串、社媒帖文或整理后的观点原文。系统会用 Grok 自动提取标的、标签、观点摘要、交易线索和风险。
+          在这里维护你想追踪的 KOL 列表。云端每日刷新时会尝试按 KOL handle 自动总结近24小时观点，并提取涉及标的与行业方向。
         </div>
       </section>
       <section class="report-entry-panel">
         <div class="report-form-grid">
           <div class="report-field">
-            <label for="social-date-input">日期</label>
-            <input id="social-date-input" class="report-input" type="date" value="{AS_OF.isoformat()}" />
+            <label for="social-kol-name-input">KOL 名称</label>
+            <input id="social-kol-name-input" class="report-input" type="text" placeholder="例如：某头部KOL" />
           </div>
           <div class="report-field">
-            <label for="social-kol-input">KOL / 来源</label>
-            <input id="social-kol-input" class="report-input" type="text" placeholder="例如：某头部KOL / 群聊 / X账号" />
+            <label for="social-kol-handle-input">KOL ID / @handle</label>
+            <input id="social-kol-handle-input" class="report-input" type="text" placeholder="例如：laoyao 或 @laoyao" />
           </div>
-          <div class="report-field full-span">
-            <label for="social-content-input">原文输入</label>
-            <textarea id="social-content-input" class="report-textarea" placeholder="粘贴 KOL 原文、帖文串、直播纪要或你整理后的要点，系统会自动提取标的与观点标签"></textarea>
+          <div class="report-field">
+            <label for="social-kol-platform-input">平台</label>
+            <input id="social-kol-platform-input" class="report-input" type="text" value="X" />
           </div>
         </div>
         <div class="report-actions">
-          <span class="report-action-note" id="social-action-note">提取完成后按日期倒序展示，并同步到云端状态。</span>
-          <button id="social-save-button" class="report-save-button" type="button">Grok提取并保存</button>
+          <span class="report-action-note" id="social-action-note">保存后会同步到云端，后续每天刷新时自动尝试抓取并总结该 KOL 近24小时观点。</span>
+          <button id="social-save-button" class="report-save-button" type="button">添加追踪KOL</button>
         </div>
       </section>
       <div class="section-head">
         <div>
-          <h2>KOL观点摘要</h2>
-          <p>系统会自动按 KOL、标的、标签和交易线索结构化展示</p>
+          <h2>追踪列表</h2>
+          <p>维护你希望云端每天自动总结的 KOL</p>
+        </div>
+        <span class="pill" id="social-tracker-count-pill">共 0 个</span>
+      </div>
+      <section class="summary-table-wrap">
+        <table class="summary-table">
+          <thead>
+            <tr>
+              <th>编号</th>
+              <th>KOL</th>
+              <th>Handle</th>
+              <th>平台</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody id="social-tracker-table-body"></tbody>
+        </table>
+        <div class="report-empty" id="social-tracker-empty-state">当前还没有追踪任何 KOL。</div>
+      </section>
+      <div class="section-head">
+        <div>
+          <h2>KOL 每日摘要</h2>
+          <p>云端按日期倒序展示每日自动总结结果</p>
         </div>
         <span class="pill" id="social-count-pill">共 0 条</span>
       </div>
@@ -4731,18 +4787,15 @@ def build_html(
           <thead>
             <tr>
               <th>编号</th>
-              <th>KOL / 来源</th>
-              <th>标的名称</th>
-              <th>标签</th>
               <th>日期</th>
-              <th>观点摘要</th>
-              <th>交易线索</th>
-              <th>风险</th>
+              <th>KOL</th>
+              <th>行业</th>
+              <th>核心观点</th>
             </tr>
           </thead>
           <tbody id="social-table-body"></tbody>
         </table>
-        <div class="report-empty" id="social-empty-state">当前还没有录入任何社交媒体观点。</div>
+        <div class="report-empty" id="social-empty-state">当前还没有自动生成的 KOL 摘要。</div>
       </section>
     </section>
     <div class="modal" id="stock-modal" aria-hidden="true">
@@ -5015,10 +5068,13 @@ def build_html(
     const reportEmptyState = document.getElementById('report-empty-state');
     const reportCountPill = document.getElementById('report-count-pill');
     const reportActionNote = document.getElementById('report-action-note');
-    const socialDateInput = document.getElementById('social-date-input');
-    const socialKolInput = document.getElementById('social-kol-input');
-    const socialContentInput = document.getElementById('social-content-input');
+    const socialKolNameInput = document.getElementById('social-kol-name-input');
+    const socialKolHandleInput = document.getElementById('social-kol-handle-input');
+    const socialKolPlatformInput = document.getElementById('social-kol-platform-input');
     const socialSaveButton = document.getElementById('social-save-button');
+    const socialTrackerTableBody = document.getElementById('social-tracker-table-body');
+    const socialTrackerEmptyState = document.getElementById('social-tracker-empty-state');
+    const socialTrackerCountPill = document.getElementById('social-tracker-count-pill');
     const socialTableBody = document.getElementById('social-table-body');
     const socialEmptyState = document.getElementById('social-empty-state');
     const socialCountPill = document.getElementById('social-count-pill');
@@ -5064,10 +5120,10 @@ def build_html(
     const DASHBOARD_STATE_API_KEY = 'astock_dashboard_state_api_url_v1';
     const DASHBOARD_ADMIN_TOKEN_KEY = 'astock_dashboard_admin_token_v1';
     const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
-    const SOCIAL_ANALYZE_API_KEY = 'astock_dashboard_social_analyze_api_url_v1';
     const INITIAL_WATCHLIST_STATUS = {json.dumps(initial_watchlist_status, ensure_ascii=False)};
     const INITIAL_STRONG_JOIN_STATUS = {json.dumps(initial_strong_join_status, ensure_ascii=False)};
     const INITIAL_REPORT_ENTRIES = {json.dumps(initial_report_entries, ensure_ascii=False)};
+    const INITIAL_SOCIAL_TRACKERS = {json.dumps(initial_social_trackers, ensure_ascii=False)};
     const INITIAL_SOCIAL_ENTRIES = {json.dumps(initial_social_entries, ensure_ascii=False)};
     const DEFAULT_DASHBOARD_STATE_API = (() => {{
       const host = window.location.hostname;
@@ -5078,9 +5134,6 @@ def build_html(
     }})();
     const DEFAULT_REPORT_ANALYZE_API = DEFAULT_DASHBOARD_STATE_API
       ? DEFAULT_DASHBOARD_STATE_API.replace('/dashboard-state', '/report-analyze')
-      : '';
-    const DEFAULT_SOCIAL_ANALYZE_API = DEFAULT_DASHBOARD_STATE_API
-      ? DEFAULT_DASHBOARD_STATE_API.replace('/dashboard-state', '/social-analyze')
       : '';
     let dashboardStateSyncPromise = Promise.resolve();
     let dashboardStateBootstrapped = false;
@@ -5122,24 +5175,27 @@ def build_html(
     function normalizeSocialEntry(entry, fallbackId) {{
       if (!entry || typeof entry !== 'object') return null;
       const kol = String(entry.kol || entry.source || '').trim();
-      const target = String(entry.target || '').trim();
       const content = String(entry.content || entry.summary || '').trim();
-      if (!kol || !target || !content) return null;
+      const targets = Array.isArray(entry.targets)
+        ? entry.targets.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 12)
+        : [];
+      const target = String(entry.target || targets[0] || '').trim();
+      if (!kol || !content) return null;
       const date = String(entry.date || '');
       const createdAt = Number(entry.createdAt || Date.now());
-      const id = String(entry.id || fallbackId || `${{kol}}-${{target}}-${{date}}-${{createdAt}}`);
+      const id = String(entry.id || fallbackId || `${{kol}}-${{date}}-${{createdAt}}`);
       return {{
         id,
         kol,
-        platform: String(entry.platform || 'X / Grok').trim(),
+        handle: String(entry.handle || '').trim(),
+        platform: String(entry.platform || 'X').trim(),
         target,
+        targets: targets.length ? targets : (target ? [target] : []),
         content,
         summary: String(entry.summary || content).trim(),
+        industry: String(entry.industry || '').trim(),
         rawText: String(entry.rawText || entry.content || '').trim(),
-        stance: String(entry.stance || '').trim(),
-        tags: Array.isArray(entry.tags) ? entry.tags.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 8) : [],
-        catalysts: Array.isArray(entry.catalysts) ? entry.catalysts.map(line => String(line || '').trim()).filter(Boolean).slice(0, 6) : [],
-        risks: Array.isArray(entry.risks) ? entry.risks.map(line => String(line || '').trim()).filter(Boolean).slice(0, 6) : [],
+        sourceNote: String(entry.sourceNote || '').trim(),
         date,
         createdAt,
       }};
@@ -5155,16 +5211,36 @@ def build_html(
       return [...merged.values()];
     }}
 
+    function normalizeSocialTracker(entry, fallbackId) {{
+      if (!entry || typeof entry !== 'object') return null;
+      const handle = String(entry.handle || entry.id || '').trim().replace(/^@+/, '');
+      if (!handle) return null;
+      return {{
+        id: String(entry.id || fallbackId || `kol-${{handle}}`),
+        name: String(entry.name || handle).trim(),
+        handle,
+        platform: String(entry.platform || 'X').trim(),
+        enabled: entry.enabled !== false,
+        createdAt: Number(entry.createdAt || Date.now()),
+      }};
+    }}
+
+    function mergeSocialTrackers(baseEntries, overlayEntries) {{
+      const merged = new Map();
+      [...baseEntries, ...overlayEntries].forEach((entry, idx) => {{
+        const normalized = normalizeSocialTracker(entry, `tracker-${{idx + 1}}`);
+        if (!normalized) return;
+        merged.set(normalized.id, normalized);
+      }});
+      return [...merged.values()];
+    }}
+
     function getDashboardStateApiUrl() {{
       return window.localStorage.getItem(DASHBOARD_STATE_API_KEY) || DEFAULT_DASHBOARD_STATE_API;
     }}
 
     function getReportAnalyzeApiUrl() {{
       return window.localStorage.getItem(DASHBOARD_ANALYZE_API_KEY) || DEFAULT_REPORT_ANALYZE_API;
-    }}
-
-    function getSocialAnalyzeApiUrl() {{
-      return window.localStorage.getItem(SOCIAL_ANALYZE_API_KEY) || DEFAULT_SOCIAL_ANALYZE_API;
     }}
 
     function getDashboardAdminToken() {{
@@ -5339,6 +5415,8 @@ def build_html(
     const WATCHLIST_STORAGE_KEY = 'astock_watchlist_status_v1';
     const WATCHLIST_STRONG_JOIN_KEY = 'astock_strong_join_v1';
     const REPORT_ENTRIES_KEY = 'astock_report_entries_v1';
+    const SOCIAL_TRACKERS_KEY = 'astock_social_trackers_v1';
+    const SOCIAL_ENTRIES_KEY = 'astock_social_entries_v1';
 
     function loadWatchlistStatus() {{
       try {{
@@ -5382,7 +5460,7 @@ def build_html(
 
     function loadSocialEntries() {{
       try {{
-        const raw = window.localStorage.getItem('astock_social_entries_v1');
+        const raw = window.localStorage.getItem(SOCIAL_ENTRIES_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
         return mergeSocialEntries(INITIAL_SOCIAL_ENTRIES, Array.isArray(parsed) ? parsed : []);
       }} catch (error) {{
@@ -5391,7 +5469,21 @@ def build_html(
     }}
 
     function saveSocialEntries(entries) {{
-      window.localStorage.setItem('astock_social_entries_v1', JSON.stringify(entries));
+      window.localStorage.setItem(SOCIAL_ENTRIES_KEY, JSON.stringify(entries));
+    }}
+
+    function loadSocialTrackers() {{
+      try {{
+        const raw = window.localStorage.getItem(SOCIAL_TRACKERS_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return mergeSocialTrackers(INITIAL_SOCIAL_TRACKERS, Array.isArray(parsed) ? parsed : []);
+      }} catch (error) {{
+        return [...INITIAL_SOCIAL_TRACKERS];
+      }}
+    }}
+
+    function saveSocialTrackers(entries) {{
+      window.localStorage.setItem(SOCIAL_TRACKERS_KEY, JSON.stringify(entries));
     }}
 
     function setReportActionNote(message, state = '') {{
@@ -5417,6 +5509,7 @@ def build_html(
         watchlistStatus: normalizeWatchlistStatusPayload(watchlistStatusMap),
         strongJoinStatus: normalizeStrongJoinPayload(strongJoinMap),
         reports: loadReportEntries(),
+        socialKolWatchlist: loadSocialTrackers(),
         socialPosts: loadSocialEntries(),
       }};
     }}
@@ -5440,17 +5533,20 @@ def build_html(
       const nextWatchlistStatus = normalizeWatchlistStatusPayload(payload?.watchlistStatus || {{}});
       const nextStrongJoinStatus = normalizeStrongJoinPayload(payload?.strongJoinStatus || {{}});
       const nextReports = mergeReportEntries([], Array.isArray(payload?.reports) ? payload.reports : []);
+      const nextSocialKolWatchlist = mergeSocialTrackers([], Array.isArray(payload?.socialKolWatchlist) ? payload.socialKolWatchlist : []);
       const nextSocialPosts = mergeSocialEntries([], Array.isArray(payload?.socialPosts) ? payload.socialPosts : []);
       replaceObjectContents(watchlistStatusMap, nextWatchlistStatus);
       replaceObjectContents(strongJoinMap, nextStrongJoinStatus);
       saveWatchlistStatus(watchlistStatusMap);
       saveStrongJoinStatus(strongJoinMap);
       saveReportEntries(nextReports);
+      saveSocialTrackers(nextSocialKolWatchlist);
       saveSocialEntries(nextSocialPosts);
       syncSyntheticWatchlistRows();
       syncStrongStockStatusControls();
       applyWatchlistVisibility();
       renderReportEntries();
+      renderSocialTrackers();
       renderSocialEntries();
     }}
 
@@ -5561,36 +5657,6 @@ def build_html(
         rawText: payload?.analysis?.rawText || rawText,
         createdAt: Date.now(),
       }}, `report-${{Date.now()}}`);
-    }}
-
-    async function analyzeSocialText(rawText, pickedDate, kol) {{
-      const apiUrl = getSocialAnalyzeApiUrl();
-      if (!apiUrl) {{
-        throw new Error('未配置社交媒体分析接口');
-      }}
-      const token = await ensureDashboardAdminToken();
-      if (!token) {{
-        throw new Error('缺少 Dashboard admin token');
-      }}
-      const response = await fetch(apiUrl, {{
-        method: 'POST',
-        headers: {{
-          'Content-Type': 'application/json',
-          'X-Dashboard-Admin-Token': token,
-        }},
-        body: JSON.stringify({{ text: rawText, date: pickedDate, kol }}),
-      }});
-      const payload = await response.json().catch(() => ({{}}));
-      if (!response.ok) {{
-        throw new Error(payload?.detail || payload?.error || `分析失败: ${{response.status}}`);
-      }}
-      return normalizeSocialEntry({{
-        ...(payload.analysis || {{}}),
-        kol: payload?.analysis?.kol || kol,
-        date: payload?.analysis?.date || pickedDate,
-        rawText: payload?.analysis?.rawText || rawText,
-        createdAt: Date.now(),
-      }}, `social-${{Date.now()}}`);
     }}
 
     function renderReportTargetCell(target) {{
@@ -5824,13 +5890,16 @@ def build_html(
       const seenCodes = new Set();
       const items = [];
       entries.forEach(entry => {{
-        const matchedCode = modalCodeByAlias[normalizeModalAlias(entry.target)];
-        if (!matchedCode || seenCodes.has(matchedCode)) return;
-        const idx = modalIndexByCode[matchedCode];
-        const item = modalItems[idx];
-        if (!item) return;
-        seenCodes.add(matchedCode);
-        items.push(item);
+        const names = Array.isArray(entry.targets) && entry.targets.length ? entry.targets : [entry.target];
+        names.forEach(name => {{
+          const matchedCode = modalCodeByAlias[normalizeModalAlias(name)];
+          if (!matchedCode || seenCodes.has(matchedCode)) return;
+          const idx = modalIndexByCode[matchedCode];
+          const item = modalItems[idx];
+          if (!item) return;
+          seenCodes.add(matchedCode);
+          items.push(item);
+        }});
       }});
       return items;
     }}
@@ -5954,25 +6023,64 @@ def build_html(
       socialTableBody.innerHTML = entries.map((entry, index) => `
         <tr>
           <td class="index-cell">${{index + 1}}</td>
-          <td>
-            <div class="report-summary">
-              <strong>${{escapeHtml(entry.kol)}}</strong>
-              <p>${{escapeHtml(entry.platform || 'X / Grok')}}</p>
-            </div>
-          </td>
-          <td>${{renderReportTargetCell(entry.target)}}</td>
-          <td>${{entry.tags?.length ? `<div class="report-tags">${{entry.tags.map(tag => `<span class="report-tag">${{escapeHtml(tag)}}</span>`).join('')}}</div>` : '-'}}</td>
           <td class="nowrap-cell">${{escapeHtml(entry.date)}}</td>
           <td>
             <div class="report-summary">
-              ${{entry.stance ? `<span class="report-stance">${{escapeHtml(entry.stance)}}</span>` : ''}}
-              <p>${{escapeHtml(entry.summary || entry.content)}}</p>
+              <strong>${{escapeHtml(entry.kol)}}</strong>
+              <p>${{escapeHtml(entry.handle ? '@' + entry.handle : (entry.platform || 'X'))}}</p>
             </div>
           </td>
-          <td>${{entry.catalysts?.length ? `<ul class="report-list-lines">${{entry.catalysts.map(line => `<li>${{escapeHtml(line)}}</li>`).join('')}}</ul>` : '-'}}</td>
-          <td>${{entry.risks?.length ? `<ul class="report-list-lines">${{entry.risks.map(line => `<li>${{escapeHtml(line)}}</li>`).join('')}}</ul>` : '-'}}</td>
+          <td>${{escapeHtml(entry.industry || '-')}}</td>
+          <td>
+            <div class="report-summary">
+              <p>${{escapeHtml(entry.summary || entry.content)}}</p>
+              ${{renderTargetTags(entry.targets)}}
+            </div>
+          </td>
         </tr>
       `).join('');
+    }}
+
+    function renderSocialTrackers() {{
+      const entries = loadSocialTrackers().sort((a, b) => {{
+        const enabledA = a.enabled ? 1 : 0;
+        const enabledB = b.enabled ? 1 : 0;
+        if (enabledA !== enabledB) return enabledB - enabledA;
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      }});
+      socialTrackerCountPill.textContent = `共 ${{entries.length}} 个`;
+      socialTrackerEmptyState.hidden = entries.length > 0;
+      socialTrackerTableBody.innerHTML = entries.map((entry, index) => `
+        <tr>
+          <td class="index-cell">${{index + 1}}</td>
+          <td>
+            <div class="report-summary">
+              <strong>${{escapeHtml(entry.name)}}</strong>
+            </div>
+          </td>
+          <td class="nowrap-cell">@${{escapeHtml(entry.handle)}}</td>
+          <td class="nowrap-cell">${{escapeHtml(entry.platform || 'X')}}</td>
+          <td>
+            <select class="status-select social-tracker-select" data-tracker-id="${{escapeHtml(entry.id)}}" aria-label="${{escapeHtml(entry.name)}}状态">
+              <option value="enabled"${{entry.enabled ? ' selected' : ''}}>启用</option>
+              <option value="disabled"${{entry.enabled ? '' : ' selected'}}>停用</option>
+            </select>
+          </td>
+        </tr>
+      `).join('');
+      socialTrackerTableBody.querySelectorAll('.social-tracker-select').forEach(select => {{
+        setSelectVisualState(select);
+        select.addEventListener('change', () => {{
+          const trackerId = select.dataset.trackerId;
+          const nextEntries = loadSocialTrackers().map(entry => {{
+            if (entry.id !== trackerId) return entry;
+            return {{ ...entry, enabled: select.value === 'enabled' }};
+          }});
+          saveSocialTrackers(nextEntries);
+          renderSocialTrackers();
+          queueDashboardStateSync(undefined, {{ promptForToken: true }});
+        }});
+      }});
     }}
 
     const watchlistStatusMap = loadWatchlistStatus();
@@ -6093,34 +6201,53 @@ def build_html(
     }});
 
     socialSaveButton.addEventListener('click', async () => {{
-      const rawText = socialContentInput.value.trim();
-      const pickedDate = socialDateInput.value || '{AS_OF.isoformat()}';
-      const kol = socialKolInput.value.trim();
-      if (!kol) {{
-        window.alert('请先填写 KOL / 来源。');
+      const name = socialKolNameInput.value.trim();
+      const rawHandle = socialKolHandleInput.value.trim();
+      const handle = rawHandle.replace(/^@+/, '');
+      const platform = (socialKolPlatformInput.value || 'X').trim() || 'X';
+      if (!name) {{
+        window.alert('请先填写 KOL 名称。');
         return;
       }}
-      if (!rawText) {{
-        window.alert('请先粘贴需要提取的社交媒体内容。');
+      if (!handle) {{
+        window.alert('请先填写 KOL ID / @handle。');
+        return;
+      }}
+      const entries = loadSocialTrackers();
+      const exists = entries.some(entry => String(entry.handle || '').toLowerCase() === handle.toLowerCase());
+      if (exists) {{
+        setSocialActionNote(`@${{handle}} 已在追踪列表中。`, 'error');
+        return;
+      }}
+      const nextEntry = normalizeSocialTracker({{
+        id: `kol-${{Date.now()}}`,
+        name,
+        handle,
+        platform,
+        enabled: true,
+        createdAt: Date.now(),
+      }}, `kol-${{Date.now()}}`);
+      if (!nextEntry) {{
+        window.alert('KOL 信息无效，请重新填写。');
         return;
       }}
       const originalLabel = socialSaveButton.textContent;
       socialSaveButton.disabled = true;
-      socialSaveButton.textContent = '提取中...';
-      setSocialActionNote('Grok 正在提取 KOL 观点并保存到表格...', 'busy');
+      socialSaveButton.textContent = '保存中...';
+      setSocialActionNote('正在保存追踪 KOL，并同步到云端状态...', 'busy');
       try {{
-        const analyzedEntry = await analyzeSocialText(rawText, pickedDate, kol);
-        const entries = loadSocialEntries();
-        entries.push(analyzedEntry);
-        saveSocialEntries(entries);
-        socialContentInput.value = '';
-        renderSocialEntries();
+        entries.push(nextEntry);
+        saveSocialTrackers(entries);
+        socialKolNameInput.value = '';
+        socialKolHandleInput.value = '';
+        socialKolPlatformInput.value = 'X';
+        renderSocialTrackers();
         await queueDashboardStateSync(undefined, {{ promptForToken: false }});
-        setSocialActionNote(`已提取并保存：${{analyzedEntry.kol}} / ${{analyzedEntry.target}}`, '');
+        setSocialActionNote(`已加入追踪：${{nextEntry.name}} (@${{nextEntry.handle}})`, '');
       }} catch (error) {{
         console.error(error);
-        setSocialActionNote(error?.message || '提取失败，请稍后重试。', 'error');
-        window.alert(error?.message || '社交媒体内容提取失败，请稍后重试。');
+        setSocialActionNote(error?.message || '保存失败，请稍后重试。', 'error');
+        window.alert(error?.message || '保存追踪 KOL 失败，请稍后重试。');
       }} finally {{
         socialSaveButton.disabled = false;
         socialSaveButton.textContent = originalLabel;
@@ -6148,6 +6275,7 @@ def build_html(
     updateWatchlistSortIndicators();
     applyWatchlistSort();
     renderReportEntries();
+    renderSocialTrackers();
     renderSocialEntries();
     window.StockKillerDashboard = {{
       setStateApiUrl(url) {{
@@ -6164,14 +6292,6 @@ def build_html(
           window.localStorage.setItem(DASHBOARD_ANALYZE_API_KEY, normalized);
         }} else {{
           window.localStorage.removeItem(DASHBOARD_ANALYZE_API_KEY);
-        }}
-      }},
-      setSocialAnalyzeApiUrl(url) {{
-        const normalized = String(url || '').trim();
-        if (normalized) {{
-          window.localStorage.setItem(SOCIAL_ANALYZE_API_KEY, normalized);
-        }} else {{
-          window.localStorage.removeItem(SOCIAL_ANALYZE_API_KEY);
         }}
       }},
       setAdminToken(token) {{

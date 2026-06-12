@@ -4,6 +4,7 @@ const path = require("path");
 const WATCHLIST_STATE_PATH = "reports/watchlist_state.json";
 const RESEARCH_REPORTS_PATH = "reports/research_reports.json";
 const SOCIAL_MEDIA_POSTS_PATH = "reports/social_media_posts.json";
+const SOCIAL_KOL_WATCHLIST_PATH = "reports/social_kol_watchlist.json";
 
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -123,6 +124,25 @@ function sanitizeSocialPosts(payload) {
     .filter(Boolean);
 }
 
+function sanitizeSocialKolWatchlist(payload) {
+  if (!Array.isArray(payload)) return [];
+  return payload
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const handle = String(item.handle || item.id || "").trim().replace(/^@+/, "");
+      if (!handle) return null;
+      return {
+        id: String(item.id || `kol-${index + 1}-${handle}`),
+        name: String(item.name || handle).trim(),
+        handle,
+        platform: String(item.platform || "X").trim(),
+        enabled: item.enabled !== false,
+        createdAt: Number(item.createdAt || Date.now()),
+      };
+    })
+    .filter(Boolean);
+}
+
 function readLocalJson(filePath, fallback) {
   try {
     const absolute = path.join(process.cwd(), filePath);
@@ -210,18 +230,24 @@ async function loadStateBundle() {
     updatedAt: "",
   });
   const reports = await readRepoJson(RESEARCH_REPORTS_PATH, []);
+  const socialKolWatchlist = await readRepoJson(SOCIAL_KOL_WATCHLIST_PATH, []);
   const socialPosts = await readRepoJson(SOCIAL_MEDIA_POSTS_PATH, []);
   return {
     watchlistStatus: sanitizeWatchlistStatus(watch.data.watchlistStatus || {}),
     strongJoinStatus: sanitizeStrongJoinStatus(watch.data.strongJoinStatus || {}),
     reports: sanitizeReports(reports.data),
+    socialKolWatchlist: sanitizeSocialKolWatchlist(socialKolWatchlist.data),
     socialPosts: sanitizeSocialPosts(socialPosts.data),
     updatedAt: String(watch.data.updatedAt || ""),
     watchlistSha: watch.sha,
     reportsSha: reports.sha,
+    socialKolSha: socialKolWatchlist.sha,
     socialSha: socialPosts.sha,
     source:
-      watch.source === "github" || reports.source === "github" || socialPosts.source === "github"
+      watch.source === "github" ||
+      reports.source === "github" ||
+      socialKolWatchlist.source === "github" ||
+      socialPosts.source === "github"
         ? "github"
         : "local",
   };
@@ -264,6 +290,9 @@ module.exports = async (req, res) => {
     const nextReports = Object.prototype.hasOwnProperty.call(body, "reports")
       ? sanitizeReports(body.reports)
       : current.reports;
+    const nextSocialKolWatchlist = Object.prototype.hasOwnProperty.call(body, "socialKolWatchlist")
+      ? sanitizeSocialKolWatchlist(body.socialKolWatchlist)
+      : current.socialKolWatchlist;
     const nextSocialPosts = Object.prototype.hasOwnProperty.call(body, "socialPosts")
       ? sanitizeSocialPosts(body.socialPosts)
       : current.socialPosts;
@@ -287,6 +316,12 @@ module.exports = async (req, res) => {
       current.reportsSha
     );
     await writeRepoJson(
+      SOCIAL_KOL_WATCHLIST_PATH,
+      nextSocialKolWatchlist,
+      `Update dashboard social KOL watchlist ${updatedAt}`,
+      current.socialKolSha
+    );
+    await writeRepoJson(
       SOCIAL_MEDIA_POSTS_PATH,
       nextSocialPosts,
       `Update dashboard social posts ${updatedAt}`,
@@ -297,6 +332,7 @@ module.exports = async (req, res) => {
       watchlistStatus: nextWatchlistStatus,
       strongJoinStatus: nextStrongJoinStatus,
       reports: nextReports,
+      socialKolWatchlist: nextSocialKolWatchlist,
       socialPosts: nextSocialPosts,
       updatedAt,
       source: "github",
