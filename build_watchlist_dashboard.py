@@ -713,6 +713,20 @@ MAIN_BUSINESS_MAP = {
     "603938.SH": "三氯氢硅/有机硅",
     "600693.SH": "商业零售/仓储物流",
     "002436.SZ": "PCB/封装基板",
+    "688772.SH": "消费电池/锂电池",
+    "300377.SZ": "金融IT/证券软件",
+    "600601.SH": "PCB/电子制造",
+    "688388.SH": "锂电铜箔/锂电材料",
+    "000960.SZ": "锡/有色金属",
+    "300803.SZ": "金融信息服务/互联网券商",
+    "301323.SZ": "磁性材料/功能材料",
+    "002812.SZ": "锂电隔膜/锂电材料",
+    "001696.SZ": "通机发动机/低空动力",
+    "301275.SZ": "零售数字化/电子价签",
+    "688003.SH": "机器视觉/工业检测设备",
+    "000737.SZ": "铜/有色金属",
+    "601609.SH": "铜加工/铜材",
+    "688114.SH": "基因测序/生命科学仪器",
 }
 
 RESEARCH_FALLBACK_MAP = {
@@ -955,6 +969,110 @@ def build_session() -> requests.Session:
     return session
 
 
+class CurlFallbackResponse:
+    def __init__(self, url: str, status_code: int, content: bytes):
+        self.url = url
+        self.status_code = status_code
+        self.content = content
+        self.encoding = "utf-8"
+
+    @property
+    def text(self) -> str:
+        return self.content.decode(self.encoding, errors="replace")
+
+    def json(self):
+        return json.loads(self.text)
+
+    def raise_for_status(self) -> None:
+        if 400 <= self.status_code:
+            raise requests.HTTPError(
+                f"{self.status_code} Error for url: {self.url}",
+                response=None,
+            )
+
+
+def curl_request(
+    method: str,
+    url: str,
+    *,
+    params: dict | None = None,
+    headers: dict[str, str] | None = None,
+    json_payload: dict | list | None = None,
+    timeout: int = 20,
+) -> CurlFallbackResponse:
+    final_url = url
+    if params:
+        query = urllib.parse.urlencode(params, doseq=True)
+        joiner = "&" if "?" in final_url else "?"
+        final_url = f"{final_url}{joiner}{query}"
+
+    cmd = [
+        "curl",
+        "-sS",
+        "-L",
+        "-X",
+        method.upper(),
+        "--connect-timeout",
+        str(min(timeout, 10)),
+        "--max-time",
+        str(timeout),
+        final_url,
+        "-w",
+        r"\n__CURL_STATUS__:%{http_code}",
+    ]
+    for key, value in (headers or {}).items():
+        cmd.extend(["-H", f"{key}: {value}"])
+    if json_payload is not None:
+        cmd.extend(["--data-binary", json.dumps(json_payload, ensure_ascii=False)])
+
+    result = subprocess.run(cmd, capture_output=True, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"curl request failed for {final_url}: {stderr or result.returncode}")
+
+    marker = b"\n__CURL_STATUS__:"
+    if marker not in result.stdout:
+        raise RuntimeError(f"curl response missing status marker for {final_url}")
+    body, status_raw = result.stdout.rsplit(marker, 1)
+    status_code = int(status_raw.decode("utf-8", errors="replace").strip())
+    response = CurlFallbackResponse(final_url, status_code, body)
+    response.raise_for_status()
+    return response
+
+
+def request_with_fallback(
+    method: str,
+    url: str,
+    *,
+    session: requests.Session | None = None,
+    params: dict | None = None,
+    headers: dict[str, str] | None = None,
+    json_payload: dict | list | None = None,
+    timeout: int = 20,
+):
+    active_session = session or build_session()
+    try:
+        response = active_session.request(
+            method.upper(),
+            url,
+            params=params,
+            headers=headers,
+            json=json_payload,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response
+    except requests.exceptions.RequestException:
+        return curl_request(
+            method,
+            url,
+            params=params,
+            headers=headers,
+            json_payload=json_payload,
+            timeout=timeout,
+        )
+
+
 def get_refresh_token() -> str:
     return (
         os.environ.get("ASTOCK_IFIND_REFRESH_TOKEN", "").strip()
@@ -1004,18 +1122,19 @@ def get_access_token() -> str:
     assert_refresh_token_not_expired(token)
     session = build_session()
     try:
-        resp = session.post(
+        resp = request_with_fallback(
+            "POST",
             f"{BASE_URL}/get_access_token",
+            session=session,
             headers={"Content-Type": "application/json", "refresh_token": token},
             timeout=20,
         )
-    except requests.exceptions.RequestException as exc:
+    except Exception as exc:
         raise RuntimeError(
             "Failed to reach iFinD token endpoint "
             f"{BASE_URL}/get_access_token. "
             f"trust_env={session.trust_env}. Check DNS/network/proxy settings."
         ) from exc
-    resp.raise_for_status()
     payload = resp.json()
     return payload["data"]["access_token"]
 
@@ -1041,13 +1160,14 @@ def fetch_history(access_token: str, codes: list[str] | None = None) -> dict[str
             "functionpara": {"Fill": "Blank"},
         }
         try:
-            resp = session.post(
+            resp = request_with_fallback(
+                "POST",
                 f"{BASE_URL}/cmd_history_quotation",
-                json=payload,
+                session=session,
+                json_payload=payload,
                 headers={"Content-Type": "application/json", "access_token": access_token},
                 timeout=30,
             )
-            resp.raise_for_status()
             out.update({row["thscode"]: row for row in resp.json()["tables"]})
         except Exception:
             if len(batch_codes) == 1:
@@ -1089,13 +1209,14 @@ def fetch_basic(access_token: str, codes: list[str] | None = None) -> dict[str, 
             ],
         }
         try:
-            resp = session.post(
+            resp = request_with_fallback(
+                "POST",
                 f"{BASE_URL}/basic_data_service",
-                json=payload,
+                session=session,
+                json_payload=payload,
                 headers={"Content-Type": "application/json", "access_token": access_token},
                 timeout=30,
             )
-            resp.raise_for_status()
             out.update({row["thscode"]: row["table"] for row in resp.json()["tables"]})
         except Exception:
             if len(batch_codes) == 1:
@@ -1123,13 +1244,14 @@ def fetch_realtime_map(access_token: str, codes: list[str], trade_date: date | N
             "starttime": f"{trade_date.isoformat()} 14:55:00",
             "endtime": f"{trade_date.isoformat()} 15:00:00",
         }
-        resp = session.post(
+        resp = request_with_fallback(
+            "POST",
             f"{BASE_URL}/real_time_quotation",
-            json=payload,
+            session=session,
+            json_payload=payload,
             headers={"Content-Type": "application/json", "access_token": access_token},
             timeout=40,
         )
-        resp.raise_for_status()
         for item in resp.json().get("tables", []):
             out[item["thscode"]] = item.get("table") or {}
     return out
@@ -1150,13 +1272,14 @@ def fetch_order_book_snapshots(access_token: str, codes: list[str]) -> dict[str,
         "endtime": f"{AS_OF.isoformat()} 15:00:00",
     }
     session = build_session()
-    resp = session.post(
+    resp = request_with_fallback(
+        "POST",
         f"{BASE_URL}/snap_shot",
-        json=payload,
+        session=session,
+        json_payload=payload,
         headers={"Content-Type": "application/json", "access_token": access_token},
         timeout=30,
     )
-    resp.raise_for_status()
     snapshots: dict[str, dict] = {}
     for row in resp.json().get("tables", []):
         times = row.get("time") or []
@@ -1203,12 +1326,13 @@ def fetch_industry(code: str) -> str:
     secid = ("1." if code.split(".")[0].startswith(("5", "6", "9")) else "0.") + code.split(".")[0]
     try:
         session = build_session()
-        resp = session.get(
+        resp = request_with_fallback(
+            "GET",
             "https://push2.eastmoney.com/api/qt/stock/get",
+            session=session,
             params={"invt": "2", "fltt": "2", "fields": "f100", "secid": secid},
             timeout=15,
         )
-        resp.raise_for_status()
         return str((resp.json().get("data") or {}).get("f100") or "")
     except Exception:
         return ""
@@ -1218,12 +1342,13 @@ def fetch_total_market_cap(code: str) -> float:
     secid = ("1." if code.split(".")[0].startswith(("5", "6", "9")) else "0.") + code.split(".")[0]
     try:
         session = build_session()
-        resp = session.get(
+        resp = request_with_fallback(
+            "GET",
             "https://push2.eastmoney.com/api/qt/stock/get",
+            session=session,
             params={"invt": "2", "fltt": "2", "fields": "f116", "secid": secid},
             timeout=15,
         )
-        resp.raise_for_status()
         return float((resp.json().get("data") or {}).get("f116") or 0)
     except Exception:
         return 0.0
@@ -1237,13 +1362,14 @@ def fetch_pe_ratios(access_token: str, codes: list[str]) -> dict[str, float | No
         ],
     }
     session = build_session()
-    resp = session.post(
+    resp = request_with_fallback(
+        "POST",
         f"{BASE_URL}/basic_data_service",
-        json=payload,
+        session=session,
+        json_payload=payload,
         headers={"Content-Type": "application/json", "access_token": access_token},
         timeout=30,
     )
-    resp.raise_for_status()
     out: dict[str, float | None] = {}
     for row in resp.json().get("tables", []):
         values = row.get("table", {}).get("ths_pe_ttm_stock") or [None]
@@ -1312,8 +1438,7 @@ def fetch_json(url: str, params: dict, timeout: int = 15, retries: int = 2) -> d
     for attempt in range(retries):
         try:
             session = build_session()
-            resp = session.get(url, params=params, timeout=timeout)
-            resp.raise_for_status()
+            resp = request_with_fallback("GET", url, session=session, params=params, timeout=timeout)
             return resp.json()
         except Exception as exc:
             last_error = exc
@@ -1364,12 +1489,13 @@ def fetch_public_kline(code: str, as_of: date) -> list[list[float | str]]:
     market_prefix = "sh" if code.split(".")[0].startswith(("5", "6", "9")) else "sz"
     symbol = f"{market_prefix}{code.split('.')[0]}"
     session = build_session()
-    resp = session.get(
+    resp = request_with_fallback(
+        "GET",
         "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        session=session,
         params={"param": f"{symbol},day,{(as_of - timedelta(days=75)).isoformat()},{as_of.isoformat()},640,qfq"},
         timeout=20,
     )
-    resp.raise_for_status()
     payload = resp.json()
     data = (((payload.get("data") or {}).get(symbol) or {}).get("qfqday") or [])
     rows: list[list[float | str]] = []
@@ -1542,7 +1668,8 @@ def fetch_top3_business_segments(code: str) -> dict[str, str | list[dict[str, fl
     try:
         raw, market = code.split(".")
         symbol = f"{market.upper()}{raw}"
-        resp = requests.get(
+        resp = request_with_fallback(
+            "GET",
             "https://emweb.securities.eastmoney.com/PC_HSF10/BusinessAnalysis/PageAjax",
             params={"code": symbol},
             headers={
@@ -1551,7 +1678,6 @@ def fetch_top3_business_segments(code: str) -> dict[str, str | list[dict[str, fl
             },
             timeout=20,
         )
-        resp.raise_for_status()
         payload = resp.json()
         rows = payload.get("zygcfx") or []
         if not rows:
@@ -1591,6 +1717,59 @@ def fetch_top3_business_segments(code: str) -> dict[str, str | list[dict[str, fl
         return {"reportDate": latest_report, "category": chosen_category, "items": items}
     except Exception:
         return {"reportDate": "", "category": "", "items": []}
+
+
+def normalize_main_business_value(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text or text == "-":
+        return ""
+    return text
+
+
+def infer_main_business_from_segments(payload: dict[str, object] | None) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    items = payload.get("items") or []
+    if not isinstance(items, list):
+        return ""
+    labels: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name or name in {"其他", "其他业务", "其他产品", "其他地区"}:
+            continue
+        if name not in labels:
+            labels.append(name)
+        if len(labels) >= 2:
+            break
+    return "/".join(labels)
+
+
+def resolve_main_business(
+    code: str,
+    *,
+    industry: str | None = None,
+    existing: str | None = None,
+    business_segments: dict[str, object] | None = None,
+    news_text: str | None = None,
+) -> str:
+    mapped = normalize_main_business_value(MAIN_BUSINESS_MAP.get(code))
+    if mapped:
+        return mapped
+    existing_value = normalize_main_business_value(existing)
+    if existing_value:
+        return existing_value
+    segment_hint = infer_main_business_from_segments(business_segments)
+    if segment_hint:
+        return segment_hint
+    industry_value = normalize_main_business_value(industry)
+    if industry_value:
+        return industry_value
+    news_hint = infer_main_business_from_text(news_text or "")
+    if news_hint:
+        return news_hint
+    return "-"
 
 
 def clean_news_title(title: str) -> str:
@@ -1933,8 +2112,10 @@ def fetch_quote_snapshot(code: str) -> dict:
     data: dict[str, object] = {}
     try:
         session = build_session()
-        resp = session.get(
+        resp = request_with_fallback(
+            "GET",
             QUOTE_API,
+            session=session,
             params={
                 "invt": "2",
                 "fltt": "2",
@@ -1943,7 +2124,6 @@ def fetch_quote_snapshot(code: str) -> dict:
             },
             timeout=15,
         )
-        resp.raise_for_status()
         data = (resp.json().get("data") or {})
     except Exception:
         data = {}
@@ -1963,8 +2143,12 @@ def fetch_quote_snapshot(code: str) -> dict:
         raw = code.split(".")[0]
         symbol = ("sh" if raw.startswith(("5", "6", "9")) else "sz") + raw
         session = build_session()
-        resp = session.get("https://qt.gtimg.cn/q=" + symbol, timeout=15)
-        resp.raise_for_status()
+        resp = request_with_fallback(
+            "GET",
+            "https://qt.gtimg.cn/q=" + symbol,
+            session=session,
+            timeout=15,
+        )
         text = resp.text
         if "=" not in text:
             return snapshot
@@ -2002,11 +2186,13 @@ def fetch_strong_stocks(trade_date: date) -> list[dict]:
         if snap["turnoverRate"] is None or snap["turnoverRate"] <= STRONG_MIN_TURNOVER or snap["turnoverRate"] > STRONG_MAX_TURNOVER:
             continue
         code = row["code"]
+        industry = fetch_industry(code)
         strong_rows.append(
             {
                 "code": code,
                 "name": row["name"],
-                "mainBusiness": MAIN_BUSINESS_MAP.get(code, fetch_industry(code) or "-"),
+                "industry": industry,
+                "mainBusiness": resolve_main_business(code, industry=industry),
                 "latestClose": snap["latestClose"],
                 "totalMarketCap": total_cap,
                 "floatMarketCap": snap["floatMarketCap"],
@@ -2025,17 +2211,18 @@ def fetch_strong_stocks(trade_date: date) -> list[dict]:
                 "link": "",
                 "isRecent": False,
             }
-            if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
-                hint = infer_main_business_from_text(
-                    " ".join(
-                        [
-                            row["latestNews"].get("title", ""),
-                            row["latestNews"].get("summary", ""),
-                        ]
-                    )
-                )
-                if hint:
-                    row["mainBusiness"] = hint
+            row["mainBusiness"] = resolve_main_business(
+                row["code"],
+                industry=row.get("industry"),
+                existing=row.get("mainBusiness"),
+                business_segments=row.get("businessSegments"),
+                news_text=" ".join(
+                    [
+                        row["latestNews"].get("title", ""),
+                        row["latestNews"].get("summary", ""),
+                    ]
+                ),
+            )
     strong_rows = finalize_strong_stocks(strong_rows, {code for _, code in WATCHLIST_BASE})
     return strong_rows
 
@@ -2109,11 +2296,13 @@ def fetch_strong_stocks_via_ifind(access_token: str, trade_date: date) -> list[d
                 )
                 prev = current_close if current_close not in (None, "") else prev
 
+        industry = fetch_industry(code)
         strong_rows.append(
             {
                 "code": code,
                 "name": code_to_name.get(code, code),
-                "mainBusiness": MAIN_BUSINESS_MAP.get(code) or "-",
+                "industry": industry,
+                "mainBusiness": resolve_main_business(code, industry=industry),
                 "latestClose": latest_close,
                 "totalMarketCap": total_cap,
                 "floatMarketCap": float_cap,
@@ -2148,17 +2337,18 @@ def fetch_strong_stocks_via_ifind(access_token: str, trade_date: date) -> list[d
             }
 
     for row in strong_rows:
-        if not matches_mainline_business(row.get("mainBusiness")):
-            hint = infer_main_business_from_text(
-                " ".join(
-                    [
-                        row["latestNews"].get("title", ""),
-                        row["latestNews"].get("summary", ""),
-                    ]
-                )
-            )
-            if hint:
-                row["mainBusiness"] = hint
+        row["mainBusiness"] = resolve_main_business(
+            row["code"],
+            industry=row.get("industry"),
+            existing=row.get("mainBusiness"),
+            business_segments=row.get("businessSegments"),
+            news_text=" ".join(
+                [
+                    row["latestNews"].get("title", ""),
+                    row["latestNews"].get("summary", ""),
+                ]
+            ),
+        )
 
     strong_rows = finalize_strong_stocks(strong_rows, {code for _, code in WATCHLIST_BASE})
     return strong_rows
@@ -2185,13 +2375,13 @@ def fetch_top5_customers(name: str, code: str) -> dict[str, object]:
             "type": "",
         }
         try:
-            resp = requests.get(
+            resp = request_with_fallback(
+                "GET",
                 "https://www.cninfo.com.cn/new/fulltextSearch/full",
                 params=params,
                 headers=headers,
                 timeout=20,
             )
-            resp.raise_for_status()
             announcements = (resp.json() or {}).get("announcements") or []
         except Exception:
             continue
@@ -2221,12 +2411,12 @@ def fetch_top5_customers(name: str, code: str) -> dict[str, object]:
         return {"reportDate": str(report_year or ""), "totalAmount": None, "totalRatio": None, "customers": []}
 
     try:
-        pdf_resp = requests.get(
+        pdf_resp = request_with_fallback(
+            "GET",
             f"https://static.cninfo.com.cn/{adjunct_url}",
             headers={"User-Agent": NEWS_UA, "Referer": "https://www.cninfo.com.cn/"},
             timeout=40,
         )
-        pdf_resp.raise_for_status()
         reader = PdfReader(io.BytesIO(pdf_resp.content))
     except Exception:
         return {"reportDate": str(report_year or ""), "totalAmount": None, "totalRatio": None, "customers": []}
@@ -2315,13 +2505,14 @@ def fetch_financial_snapshots(access_token: str, codes: list[str]) -> dict[str, 
             ],
         }
         session = build_session()
-        resp = session.post(
+        resp = request_with_fallback(
+            "POST",
             f"{BASE_URL}/basic_data_service",
-            json=payload,
+            session=session,
+            json_payload=payload,
             headers={"Content-Type": "application/json", "access_token": access_token},
             timeout=60,
         )
-        resp.raise_for_status()
         for row in resp.json()["tables"]:
             code = row["thscode"]
             table = row["table"]
@@ -2348,13 +2539,14 @@ def fetch_financial_snapshots(access_token: str, codes: list[str]) -> dict[str, 
         ],
     }
     session = build_session()
-    resp = session.post(
+    resp = request_with_fallback(
+        "POST",
         f"{BASE_URL}/basic_data_service",
-        json=q1_payload,
+        session=session,
+        json_payload=q1_payload,
         headers={"Content-Type": "application/json", "access_token": access_token},
         timeout=60,
     )
-    resp.raise_for_status()
     for row in resp.json()["tables"]:
         code = row["thscode"]
         table = row["table"]
@@ -2470,7 +2662,6 @@ def build_dataset() -> list[dict]:
         if len(close_list) >= 2 and close_list[-2]:
             today_pct = (close_list[-1] / close_list[-2] - 1.0) * 100.0
         industry = fetch_industry(code)
-        main_business = MAIN_BUSINESS_MAP.get(code, industry)
 
         last_5 = []
         prev = None
@@ -2504,6 +2695,7 @@ def build_dataset() -> list[dict]:
         top_holders = fetch_top5_shareholders(code)
         business_segments = fetch_top3_business_segments(code)
         top_customers = fetch_top5_customers(name, code)
+        main_business = resolve_main_business(code, industry=industry, business_segments=business_segments)
 
         dataset.append(
             {
@@ -2687,8 +2879,12 @@ def index_code_to_qq_symbol(code: str) -> str:
 def fetch_market_index_cards_public() -> list[dict[str, object]]:
     symbols = [index_code_to_qq_symbol(code) for _, code in MARKET_INDEXES]
     session = build_session()
-    resp = session.get("https://qt.gtimg.cn/q=" + ",".join(symbols), timeout=20)
-    resp.raise_for_status()
+    resp = request_with_fallback(
+        "GET",
+        "https://qt.gtimg.cn/q=" + ",".join(symbols),
+        session=session,
+        timeout=20,
+    )
     text = resp.content.decode("gbk", errors="ignore")
     parsed: dict[str, list[str]] = {}
     for line in text.split(";"):
@@ -2766,11 +2962,12 @@ def fetch_stock_name_map(symbols: list[str]) -> dict[str, str]:
     session = build_session()
     for batch in batched(qq_symbols, 40):
         try:
-            resp = session.get(
+            resp = request_with_fallback(
+                "GET",
                 "https://qt.gtimg.cn/q=" + ",".join(batch),
+                session=session,
                 timeout=20,
             )
-            resp.raise_for_status()
             for line in resp.text.split(";"):
                 line = line.strip()
                 if not line.startswith("v_") or "=" not in line:
@@ -2801,9 +2998,11 @@ def probe_ifind_fund_quote_support(access_token: str | None) -> dict[str, object
     supported_codes: list[str] = []
     for code in ["161725.OF", "159915.OF", "588000.OF"]:
         try:
-            resp = session.post(
+            resp = request_with_fallback(
+                "POST",
                 f"{BASE_URL}/cmd_history_quotation",
-                json={
+                session=session,
+                json_payload={
                     "codes": code,
                     "indicators": "open,high,low,close,volume,amount",
                     "startdate": (AS_OF - timedelta(days=20)).strftime("%Y-%m-%d"),
@@ -2813,7 +3012,6 @@ def probe_ifind_fund_quote_support(access_token: str | None) -> dict[str, object
                 headers={"Content-Type": "application/json", "access_token": access_token},
                 timeout=20,
             )
-            resp.raise_for_status()
             tables = resp.json().get("tables") or []
             times = (tables[0].get("time") if tables else None) or []
             if times:
@@ -2840,12 +3038,13 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
     stock_symbol_set: set[str] = set()
     for code in INSTITUTION_FUND_CODES:
         try:
-            resp = session.get(
+            resp = request_with_fallback(
+                "GET",
                 f"https://fund.eastmoney.com/pingzhongdata/{code}.js?v={int(time.time())}",
+                session=session,
                 headers={"User-Agent": NEWS_UA, "Referer": f"https://fund.eastmoney.com/{code}.html"},
                 timeout=20,
             )
-            resp.raise_for_status()
             text = resp.text
             name_match = re.search(r'var\s+fS_name\s*=\s*"([^"]+)"', text)
             name = name_match.group(1).strip() if name_match else code
@@ -3312,7 +3511,9 @@ def build_html(
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
   <style>
     :root {{
-      --bg: #16222b;
+      --bg: #333333;
+      --paper: #3b3b3b;
+      --paper-2: #3b3b3b;
       --bg-2: #1c2b36;
       --paper: rgba(20, 31, 40, 0.88);
       --paper-2: rgba(16, 26, 35, 0.94);
@@ -3334,7 +3535,9 @@ def build_html(
       --cut-size: 14px;
     }}
     body[data-theme="light"] {{
-      --bg: #eef3f6;
+      --bg: #ffffff;
+      --paper: #f9f9fa;
+      --paper-2: #f9f9fa;
       --bg-2: #e3edf2;
       --paper: rgba(250, 253, 255, 0.92);
       --paper-2: rgba(255, 255, 255, 0.96);
@@ -3357,18 +3560,12 @@ def build_html(
       margin: 0;
       font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
       color: var(--ink);
-      background:
-        radial-gradient(circle at 12% 10%, rgba(83,242,229,0.10), transparent 24%),
-        radial-gradient(circle at 86% 16%, rgba(122,215,255,0.08), transparent 20%),
-        linear-gradient(180deg, #233642 0%, var(--bg) 56%, #121c24 100%);
+      background: var(--bg);
       min-height: 100vh;
       position: relative;
     }}
     body[data-theme="light"] {{
-      background:
-        radial-gradient(circle at 10% 8%, rgba(0,153,213,0.08), transparent 24%),
-        radial-gradient(circle at 88% 12%, rgba(0,127,140,0.08), transparent 20%),
-        linear-gradient(180deg, #fafcfd 0%, var(--bg) 54%, #dfe8ed 100%);
+      background: var(--bg);
     }}
     body::before {{
       content: "";
@@ -4513,6 +4710,222 @@ def build_html(
       .chart {{
         height: 28vh;
       }}
+    }}
+    .summary-table-wrap,
+    .panel,
+    .market-card,
+    .market-stat,
+    .report-entry-panel,
+    .removed-item,
+    .index-summary-item,
+    .index-leader-item,
+    .research-panel,
+    .chart-insights .research-section,
+    .research-metric,
+    .index-modal-card,
+    .modal-card,
+    .report-detail-box {{
+      background: var(--paper) !important;
+    }}
+    .summary-table thead,
+    .summary-table tbody,
+    .summary-table tr,
+    .summary-table td,
+    .summary-table th {{
+      background-color: transparent;
+    }}
+    :root {{
+      --bg: #ffffff;
+      --paper: #f9f9fa;
+      --paper-2: #f9f9fa;
+      --ink: #1f1f1f;
+      --muted: #8a8a8a;
+      --line: #ececef;
+      --line-strong: #dddddf;
+      --accent: #1f1f1f;
+      --accent-soft: rgba(0, 0, 0, 0.04);
+      --rise: #3a8f52;
+      --fall: #d46a6a;
+      --warn: #d7a94b;
+      background: #ffffff !important;
+      color: #1f1f1f;
+    }}
+    body[data-theme="dark"] {{
+      --bg: #333333;
+      --paper: #3b3b3b;
+      --paper-2: #3b3b3b;
+      --ink: #f2f2f2;
+      --muted: #b7b7b7;
+      --line: #4a4a4a;
+      --line-strong: #5a5a5a;
+      --accent: #f2f2f2;
+      --accent-soft: rgba(255, 255, 255, 0.06);
+      --rise: #7bd88f;
+      --fall: #ff8f8f;
+      --warn: #f0c674;
+      background: #333333 !important;
+      color: #f2f2f2;
+    }}
+    body {{
+      background: #ffffff !important;
+      color: #1f1f1f;
+    }}
+    body[data-theme="dark"] {{
+      background: #333333 !important;
+      color: #f2f2f2;
+    }}
+    .summary-table-wrap,
+    .panel,
+    .market-card,
+    .market-stat,
+    .report-entry-panel,
+    .removed-item,
+    .index-summary-item,
+    .index-leader-item,
+    .research-panel,
+    .chart-insights .research-section,
+    .research-metric,
+    .index-modal-card,
+    .modal-card,
+    .report-detail-box,
+    .sidebar,
+    .hero,
+    .search-bar,
+    .report-input,
+    .report-textarea,
+    .notice-banner,
+    .removed-panel {{
+      background: #f9f9fa !important;
+      color: #1f1f1f !important;
+      border-color: #ececef !important;
+      box-shadow: none !important;
+    }}
+    body[data-theme="dark"] .summary-table-wrap,
+    body[data-theme="dark"] .panel,
+    body[data-theme="dark"] .market-card,
+    body[data-theme="dark"] .market-stat,
+    body[data-theme="dark"] .report-entry-panel,
+    body[data-theme="dark"] .removed-item,
+    body[data-theme="dark"] .index-summary-item,
+    body[data-theme="dark"] .index-leader-item,
+    body[data-theme="dark"] .research-panel,
+    body[data-theme="dark"] .chart-insights .research-section,
+    body[data-theme="dark"] .research-metric,
+    body[data-theme="dark"] .index-modal-card,
+    body[data-theme="dark"] .modal-card,
+    body[data-theme="dark"] .report-detail-box,
+    body[data-theme="dark"] .sidebar,
+    body[data-theme="dark"] .hero,
+    body[data-theme="dark"] .search-bar,
+    body[data-theme="dark"] .report-input,
+    body[data-theme="dark"] .report-textarea,
+    body[data-theme="dark"] .notice-banner,
+    body[data-theme="dark"] .removed-panel {{
+      background: #3b3b3b !important;
+      color: #f2f2f2 !important;
+      border-color: #4a4a4a !important;
+    }}
+    .summary-table thead,
+    .summary-table tbody tr:hover,
+    .report-row-main[data-open="true"] td,
+    .meta span,
+    .pill,
+    .report-tag,
+    .theme-toggle button.active {{
+      background: #efeff1 !important;
+      color: #1f1f1f !important;
+      border-color: #dddddf !important;
+    }}
+    body[data-theme="dark"] .summary-table thead,
+    body[data-theme="dark"] .summary-table tbody tr:hover,
+    body[data-theme="dark"] .report-row-main[data-open="true"] td,
+    body[data-theme="dark"] .meta span,
+    body[data-theme="dark"] .pill,
+    body[data-theme="dark"] .report-tag,
+    body[data-theme="dark"] .theme-toggle button.active {{
+      background: #454545 !important;
+      color: #f2f2f2 !important;
+      border-color: #555555 !important;
+    }}
+    .market-card-head strong,
+    .market-card-price,
+    .market-stat strong,
+    .index-summary-item strong,
+    .index-leader-item strong,
+    .research-metric strong,
+    .section-head h2,
+    .market-overview-head h2,
+    .hero h1,
+    .modal-head h3,
+    .index-modal-head h3,
+    .stock-name {{
+      color: #1f1f1f !important;
+    }}
+    body[data-theme="dark"] .market-card-head strong,
+    body[data-theme="dark"] .market-card-price,
+    body[data-theme="dark"] .market-stat strong,
+    body[data-theme="dark"] .index-summary-item strong,
+    body[data-theme="dark"] .index-leader-item strong,
+    body[data-theme="dark"] .research-metric strong,
+    body[data-theme="dark"] .section-head h2,
+    body[data-theme="dark"] .market-overview-head h2,
+    body[data-theme="dark"] .hero h1,
+    body[data-theme="dark"] .modal-head h3,
+    body[data-theme="dark"] .index-modal-head h3,
+    body[data-theme="dark"] .stock-name {{
+      color: #f2f2f2 !important;
+    }}
+    .summary-table th,
+    .summary-table td,
+    .stock-code,
+    .market-card-head,
+    .market-card-meta,
+    .meta span,
+    .pill,
+    .report-action-note,
+    .report-field label,
+    .section-head p,
+    .removed-head p,
+    .notice-banner,
+    .news-time {{
+      color: #8a8a8a !important;
+    }}
+    body[data-theme="dark"] .summary-table th,
+    body[data-theme="dark"] .summary-table td,
+    body[data-theme="dark"] .stock-code,
+    body[data-theme="dark"] .market-card-head,
+    body[data-theme="dark"] .market-card-meta,
+    body[data-theme="dark"] .meta span,
+    body[data-theme="dark"] .pill,
+    body[data-theme="dark"] .report-action-note,
+    body[data-theme="dark"] .report-field label,
+    body[data-theme="dark"] .section-head p,
+    body[data-theme="dark"] .removed-head p,
+    body[data-theme="dark"] .notice-banner,
+    body[data-theme="dark"] .news-time {{
+      color: #b7b7b7 !important;
+    }}
+    .search-input,
+    .report-input,
+    .report-textarea,
+    .modal-close,
+    .sidebar-link,
+    .status-select,
+    .join-watchlist-select {{
+      color: #1f1f1f !important;
+    }}
+    body[data-theme="dark"] .search-input,
+    body[data-theme="dark"] .report-input,
+    body[data-theme="dark"] .report-textarea,
+    body[data-theme="dark"] .modal-close,
+    body[data-theme="dark"] .sidebar-link,
+    body[data-theme="dark"] .status-select,
+    body[data-theme="dark"] .join-watchlist-select {{
+      color: #f2f2f2 !important;
+    }}
+    .search-input::placeholder,
+    .report-textarea::placeholder {{
+      color: #9f9f9f !important;
     }}
   </style>
 </head>
@@ -6339,7 +6752,12 @@ def build_html(
 def hydrate_cached_dataset(dataset: list[dict]) -> list[dict]:
     for item in dataset:
         code = item.get("code", "")
-        item["mainBusiness"] = MAIN_BUSINESS_MAP.get(code, item.get("industry", ""))
+        item["mainBusiness"] = resolve_main_business(
+            code,
+            industry=item.get("industry", ""),
+            existing=item.get("mainBusiness", ""),
+            business_segments=item.get("businessSegments"),
+        )
         item["research"] = build_research_payload(code, item.get("research", {}))
         item["orderBook"] = item.get("orderBook") or {"time": "", "asks": [], "bids": []}
         item["peRatio"] = item.get("peRatio")
@@ -6391,24 +6809,18 @@ def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
     for item in rows:
         code = item.get("code", "")
         industry = item.get("industry") or fetch_industry(code) or ""
-        existing_main_business = (item.get("mainBusiness") or "").strip()
-        if existing_main_business == "-":
-            existing_main_business = ""
         latest_news = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
-        news_hint = infer_main_business_from_text(
-            " ".join(
+        item["mainBusiness"] = resolve_main_business(
+            code,
+            industry=industry,
+            existing=item.get("mainBusiness", ""),
+            business_segments=item.get("businessSegments"),
+            news_text=" ".join(
                 [
                     latest_news.get("title", ""),
                     latest_news.get("summary", ""),
                 ]
-            )
-        )
-        item["mainBusiness"] = (
-            MAIN_BUSINESS_MAP.get(code)
-            or existing_main_business
-            or industry
-            or news_hint
-            or "-"
+            ),
         )
         item["latestNews"] = latest_news
         item["research"] = build_research_payload(code, item.get("research", {}))
@@ -6621,18 +7033,30 @@ def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
             )
             prev_row = prev_strong_map.get(code, {})
             industry = prev_row.get("industry") or fetch_industry(code) or ""
+            latest_news = news_map.get(code) or prev_row.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
             row = {
                 "code": code,
                 "name": candidate["name"],
                 "industry": industry,
-                "mainBusiness": MAIN_BUSINESS_MAP.get(code) or prev_row.get("mainBusiness") or industry or "-",
+                "mainBusiness": resolve_main_business(
+                    code,
+                    industry=industry,
+                    existing=prev_row.get("mainBusiness"),
+                    business_segments=prev_row.get("businessSegments"),
+                    news_text=" ".join(
+                        [
+                            latest_news.get("title", ""),
+                            latest_news.get("summary", ""),
+                        ]
+                    ),
+                ),
                 "latestClose": latest_close,
                 "totalMarketCap": total_cap,
                 "floatMarketCap": float_cap,
                 "todayAmount": today_amount,
                 "turnoverRate": turnover_rate,
                 "todayPct": candidate["todayPct"],
-                "latestNews": news_map.get(code) or prev_row.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""},
+                "latestNews": latest_news,
                 "research": empty_research_payload(),
                 "peRatio": None,
                 "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
@@ -6645,17 +7069,6 @@ def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
                 ] if times and close_list and len(times) == len(close_list) else [],
                 "last5": [],
             }
-            if not matches_mainline_business(row.get("mainBusiness")):
-                hint = infer_main_business_from_text(
-                    " ".join(
-                        [
-                            row["latestNews"].get("title", ""),
-                            row["latestNews"].get("summary", ""),
-                        ]
-                    )
-                )
-                if hint:
-                    row["mainBusiness"] = hint
             if strong_stock_passes_final_filters(row):
                 strong.append(row)
     strong = finalize_strong_stocks(strong, {row["code"] for row in watch})
@@ -6715,29 +7128,32 @@ def main() -> int:
     news_map = fetch_latest_news_map(all_news_targets)
     for row in dataset:
         row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
-        if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
-            news_hint = infer_main_business_from_text(
-                " ".join(
-                    [
-                        row["latestNews"].get("title", ""),
-                        row["latestNews"].get("summary", ""),
-                    ]
-                )
-            )
-            if news_hint:
-                row["mainBusiness"] = news_hint
+        row["mainBusiness"] = resolve_main_business(
+            row["code"],
+            industry=row.get("industry"),
+            existing=row.get("mainBusiness"),
+            business_segments=row.get("businessSegments"),
+            news_text=" ".join(
+                [
+                    row["latestNews"].get("title", ""),
+                    row["latestNews"].get("summary", ""),
+                ]
+            ),
+        )
     for row in strong_stocks:
         row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
-        if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
-            news_hint = infer_main_business_from_text(
-                " ".join(
-                    [
-                        row["latestNews"].get("title", ""),
-                        row["latestNews"].get("summary", ""),
-                    ]
-                )
-            )
-            row["mainBusiness"] = news_hint or row.get("mainBusiness") or "-"
+        row["mainBusiness"] = resolve_main_business(
+            row["code"],
+            industry=row.get("industry"),
+            existing=row.get("mainBusiness"),
+            business_segments=row.get("businessSegments"),
+            news_text=" ".join(
+                [
+                    row["latestNews"].get("title", ""),
+                    row["latestNews"].get("summary", ""),
+                ]
+            ),
+        )
 
     strong_stocks = backfill_market_caps(strong_stocks)
     strong_stocks = finalize_strong_stocks(strong_stocks, {row["code"] for row in dataset})
