@@ -727,6 +727,44 @@ MAIN_BUSINESS_MAP = {
     "000737.SZ": "铜/有色金属",
     "601609.SH": "铜加工/铜材",
     "688114.SH": "基因测序/生命科学仪器",
+    "688757.SH": "半导体检测/第三方实验室",
+    "600378.SH": "氟化工/电子气体/高端材料",
+    "002183.SZ": "供应链服务/消费分销",
+    "002387.SZ": "OLED显示/柔性屏",
+    "603360.SH": "工业杀菌剂/精细化工",
+    "300976.SZ": "消费电子功能器件",
+    "601636.SH": "浮法玻璃/光伏玻璃",
+    "688325.SH": "电池管理芯片/模拟芯片",
+    "002636.SZ": "覆铜板/PCB材料",
+    "300489.SZ": "红外材料/红外光学",
+    "000785.SZ": "家居零售/家装卖场",
+    "603203.SH": "电子装联设备/精密焊接",
+    "603778.SH": "光伏组件/新能源",
+    "002747.SZ": "工业机器人/伺服系统",
+    "688519.SH": "覆铜板/电子材料",
+    "603859.SH": "工业软件/智能制造",
+    "688787.SH": "AI数据服务/训练数据",
+    "002931.SZ": "机械零部件/液压元件",
+    "002354.SZ": "数字营销/AI应用",
+    "603823.SH": "颜料/精细化工",
+    "688126.SH": "半导体硅片",
+    "601208.SH": "电子材料/绝缘材料",
+    "688662.SH": "热电器件/半导体热管理",
+    "300331.SZ": "微纳光学/光学材料",
+    "688809.SH": "半导体设备/检测服务",
+    "000970.SZ": "稀土永磁/磁性材料",
+    "603650.SH": "半导体材料/光刻胶",
+    "603186.SH": "覆铜板/复合材料",
+    "002585.SZ": "光学膜/新材料",
+    "300263.SZ": "电子新材料/节能环保",
+    "300209.SZ": "商业航天/卫星应用",
+    "688548.SH": "电子大宗气体/工业气体",
+    "688362.SH": "封测/先进封装",
+    "301389.SZ": "电磁屏蔽材料/消费电子",
+    "000688.SZ": "铅锌矿/有色金属",
+    "688102.SH": "高温合金/特种材料",
+    "000962.SZ": "钽铌金属/稀有金属",
+    "600353.SH": "电真空器件/军工电子",
 }
 
 RESEARCH_FALLBACK_MAP = {
@@ -3188,10 +3226,23 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
         if code in seen:
             continue
         historical = load_historical_report_row(code) or {}
+        historical_segments = historical.get("businessSegments") if historical else None
+        historical_news = historical.get("latestNews") if historical else None
         seed = {
             "code": code,
             "name": name,
-            "mainBusiness": MAIN_BUSINESS_MAP.get(code) or "-",
+            "mainBusiness": resolve_main_business(
+                code,
+                industry=(historical.get("industry") if historical else "") or "",
+                existing=historical.get("mainBusiness") if historical else "",
+                business_segments=historical_segments,
+                news_text=" ".join(
+                    [
+                        str((historical_news or {}).get("title") or ""),
+                        str((historical_news or {}).get("summary") or ""),
+                    ]
+                ),
+            ),
             "industry": "",
             "research": build_research_payload(code, {}),
             "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
@@ -3241,6 +3292,23 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
                 seed["latestNews"] = fetch_latest_news_map([(name, code)]).get(code) or seed["latestNews"]
             except Exception:
                 pass
+        if not normalize_main_business_value(seed.get("industry")):
+            try:
+                seed["industry"] = fetch_industry(code) or seed.get("industry") or ""
+            except Exception:
+                pass
+        seed["mainBusiness"] = resolve_main_business(
+            code,
+            industry=seed.get("industry"),
+            existing=seed.get("mainBusiness"),
+            business_segments=seed.get("businessSegments"),
+            news_text=" ".join(
+                [
+                    str((seed.get("latestNews") or {}).get("title") or ""),
+                    str((seed.get("latestNews") or {}).get("summary") or ""),
+                ]
+            ),
+        )
         seen.add(code)
         extras.append(seed)
         if len(extras) >= limit:
@@ -3262,6 +3330,23 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
             if not code or code in seen:
                 continue
             seen.add(code)
+            if not normalize_main_business_value(row.get("industry")):
+                try:
+                    row["industry"] = fetch_industry(code) or row.get("industry") or ""
+                except Exception:
+                    pass
+            row["mainBusiness"] = resolve_main_business(
+                code,
+                industry=row.get("industry"),
+                existing=row.get("mainBusiness"),
+                business_segments=row.get("businessSegments"),
+                news_text=" ".join(
+                    [
+                        str((row.get("latestNews") or {}).get("title") or ""),
+                        str((row.get("latestNews") or {}).get("summary") or ""),
+                    ]
+                ),
+            )
             extras.append(row)
             if len(extras) >= limit:
                 return extras
