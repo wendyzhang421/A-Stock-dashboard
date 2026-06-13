@@ -63,7 +63,7 @@ function sanitizeReports(payload) {
       const createdAt = Number(item.createdAt || Date.now());
       const id = String(item.id || `report-${index + 1}-${createdAt}`);
       const summary = String(item.summary || content).trim();
-      const industry = String(item.industry || "").trim();
+      const industry = String(item.industry || "未分类").trim();
       const rawText = String(item.rawText || item.content || "").trim();
       return {
         id,

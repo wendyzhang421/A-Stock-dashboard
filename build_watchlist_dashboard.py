@@ -146,7 +146,7 @@ def load_research_report_entries() -> list[dict]:
         target = str(item.get("target") or "").strip()
         content = str(item.get("content") or "").strip()
         summary = str(item.get("summary") or content).strip()
-        industry = str(item.get("industry") or "").strip()
+        industry = str(item.get("industry") or "未分类").strip()
         targets = [str(tag).strip() for tag in (item.get("targets") or []) if str(tag).strip()][:12]
         if not summary:
             continue
@@ -4445,6 +4445,91 @@ def build_html(
       margin: 0;
       cursor: pointer;
     }}
+    .report-head-actions {{
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }}
+    .report-hidden-toggle {{
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+    }}
+    .report-hidden-toggle input {{
+      margin: 0;
+    }}
+    .report-entry-row {{
+      cursor: pointer;
+    }}
+    .report-row-hidden {{
+      opacity: 0.46;
+    }}
+    .report-hide-cell {{
+      text-align: center;
+    }}
+    .report-hide-checkbox {{
+      margin: 0;
+    }}
+    .report-source-row td {{
+      padding-top: 0;
+    }}
+    .report-source-panel {{
+      margin: 0 0 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-card);
+      background: var(--paper-2);
+      color: var(--ink);
+    }}
+    .report-source-panel pre {{
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.6;
+    }}
+    .report-target-hover-card {{
+      position: fixed;
+      z-index: 40;
+      min-width: 190px;
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-card);
+      background: var(--paper-2);
+      color: var(--ink);
+      box-shadow: var(--shadow);
+      pointer-events: none;
+    }}
+    .report-target-hover-card[hidden] {{
+      display: none;
+    }}
+    .report-hover-title {{
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .report-hover-lines {{
+      display: grid;
+      gap: 5px;
+    }}
+    .report-hover-row {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      white-space: nowrap;
+      font-size: 11px;
+    }}
+    .report-hover-label {{
+      color: var(--muted);
+    }}
+    .report-hover-value {{
+      font-weight: 700;
+    }}
     .report-summary {{
       display: grid;
       gap: 6px;
@@ -5199,25 +5284,33 @@ def build_html(
       </section>
       <div class="section-head">
         <div>
-          <h2>录入结果</h2>
+          <h2>历史研究</h2>
           <p>系统会按核心观点、行业和涉及标的结构化展示</p>
         </div>
-        <span class="pill" id="report-count-pill">共 0 条</span>
+        <div class="report-head-actions">
+          <label class="pill report-hidden-toggle">
+            <input id="report-hidden-toggle" type="checkbox" />
+            <span>显示隐藏项</span>
+          </label>
+          <span class="pill" id="report-count-pill">共 0 条</span>
+        </div>
       </div>
-      <section class="summary-table-wrap">
+      <section class="summary-table-wrap" id="report-table-section">
         <table class="summary-table">
           <thead>
             <tr>
               <th>编号</th>
-              <th>日期</th>
               <th>行业</th>
               <th>核心观点</th>
+              <th>日期</th>
+              <th>隐藏</th>
             </tr>
           </thead>
           <tbody id="report-table-body"></tbody>
         </table>
         <div class="report-empty" id="report-empty-state">当前还没有录入任何投研内容。</div>
       </section>
+      <div class="report-target-hover-card" id="report-target-hover-card" hidden></div>
     </section>
     <section class="page-view" id="social-view" hidden>
       <section class="hero">
@@ -5563,8 +5656,11 @@ def build_html(
     const reportContentInput = document.getElementById('report-content-input');
     const reportSaveButton = document.getElementById('report-save-button');
     const reportTableBody = document.getElementById('report-table-body');
+    const reportTableSection = document.getElementById('report-table-section');
+    const reportHiddenToggle = document.getElementById('report-hidden-toggle');
     const reportEmptyState = document.getElementById('report-empty-state');
     const reportCountPill = document.getElementById('report-count-pill');
+    const reportTargetHoverCard = document.getElementById('report-target-hover-card');
     const reportActionNote = document.getElementById('report-action-note');
     const socialKolNameInput = document.getElementById('social-kol-name-input');
     const socialKolHandleInput = document.getElementById('social-kol-handle-input');
@@ -5618,6 +5714,7 @@ def build_html(
     const DASHBOARD_STATE_API_KEY = 'astock_dashboard_state_api_url_v1';
     const DASHBOARD_ADMIN_TOKEN_KEY = 'astock_dashboard_admin_token_v1';
     const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
+    const REPORT_HIDDEN_IDS_KEY = 'astock_report_hidden_ids_v1';
     const INITIAL_WATCHLIST_STATUS = {json.dumps(initial_watchlist_status, ensure_ascii=False)};
     const INITIAL_STRONG_JOIN_STATUS = {json.dumps(initial_strong_join_status, ensure_ascii=False)};
     const INITIAL_REPORT_ENTRIES = {json.dumps(initial_report_entries, ensure_ascii=False)};
@@ -5635,6 +5732,7 @@ def build_html(
       : '';
     let dashboardStateSyncPromise = Promise.resolve();
     let dashboardStateBootstrapped = false;
+    let showHiddenReports = false;
 
     function normalizeReportEntry(entry, fallbackId) {{
       if (!entry || typeof entry !== 'object') return null;
@@ -5653,7 +5751,7 @@ def build_html(
         targets: targets.length ? targets : (target ? [target] : []),
         content,
         summary: String(entry.summary || content).trim(),
-        industry: String(entry.industry || '').trim(),
+        industry: String(entry.industry || '未分类').trim(),
         rawText: String(entry.rawText || entry.content || '').trim(),
         date,
         createdAt,
@@ -5665,9 +5763,41 @@ def build_html(
       [...baseEntries, ...overlayEntries].forEach((entry, idx) => {{
         const normalized = normalizeReportEntry(entry, `report-${{idx + 1}}`);
         if (!normalized) return;
+        const existing = merged.get(normalized.id);
+        if (
+          existing &&
+          (!normalized.industry || normalized.industry === '未分类') &&
+          existing.industry &&
+          existing.industry !== '未分类'
+        ) {{
+          normalized.industry = existing.industry;
+        }}
         merged.set(normalized.id, normalized);
       }});
       return [...merged.values()];
+    }}
+
+    function loadHiddenReportIds() {{
+      try {{
+        const parsed = JSON.parse(window.localStorage.getItem(REPORT_HIDDEN_IDS_KEY) || '[]');
+        return new Set(Array.isArray(parsed) ? parsed.map(id => String(id)) : []);
+      }} catch (error) {{
+        return new Set();
+      }}
+    }}
+
+    function saveHiddenReportIds(ids) {{
+      window.localStorage.setItem(REPORT_HIDDEN_IDS_KEY, JSON.stringify([...ids]));
+    }}
+
+    function setReportEntryHidden(id, hidden) {{
+      const ids = loadHiddenReportIds();
+      if (hidden) {{
+        ids.add(String(id));
+      }} else {{
+        ids.delete(String(id));
+      }}
+      saveHiddenReportIds(ids);
     }}
 
     function normalizeSocialEntry(entry, fallbackId) {{
@@ -6165,7 +6295,30 @@ def build_html(
       }}
       const matchedItem = modalItems[modalIndexByCode[matchedCode]];
       const codeText = matchedItem?.code ? `<span class="stock-code">${{escapeHtml(matchedItem.code)}}</span>` : '';
-      return `<button class="report-target-trigger" type="button" data-code="${{escapeHtml(matchedCode)}}"><span class="stock-name">${{display}}</span>${{codeText}}</button>`;
+      return `<button class="report-target-trigger" type="button" data-code="${{escapeHtml(matchedCode)}}" ${{renderReportHoverAttrs(matchedItem)}}><span class="stock-name">${{display}}</span>${{codeText}}</button>`;
+    }}
+
+    function formatReportPrice(value) {{
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric.toFixed(2) : '暂无';
+    }}
+
+    function formatReportPct(value) {{
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '暂无';
+      return `${{numeric >= 0 ? '+' : ''}}${{numeric.toFixed(2)}}%`;
+    }}
+
+    function renderReportHoverAttrs(item) {{
+      const title = item?.code ? `${{item.name || item.code}} · ${{item.code}}` : (item?.name || '标的信息');
+      const pctValue = item?.todayPct == null ? '' : Number(item.todayPct);
+      return [
+        `data-hover-title="${{escapeHtml(title || '标的信息')}}"`,
+        `data-hover-price="${{escapeHtml(formatReportPrice(item?.latestClose))}}"`,
+        `data-hover-cap="${{escapeHtml(item?.totalMarketCap == null ? '暂无' : formatYiRmb(item.totalMarketCap))}}"`,
+        `data-hover-pct="${{escapeHtml(formatReportPct(item?.todayPct))}}"`,
+        `data-hover-pct-class="${{escapeHtml(pctClass(pctValue))}}"`,
+      ].join(' ');
     }}
 
     function renderTargetTags(targets) {{
@@ -6174,9 +6327,10 @@ def build_html(
         const label = escapeHtml(target);
         const matchedCode = modalCodeByAlias[normalizeModalAlias(target)];
         if (!matchedCode) {{
-          return `<span class="report-tag">${{label}}</span>`;
+          return `<span class="report-tag" ${{renderReportHoverAttrs({{ name: target }})}}>${{label}}</span>`;
         }}
-        return `<button class="report-target-trigger report-tag-button" type="button" data-code="${{escapeHtml(matchedCode)}}"><span class="report-tag">${{label}}</span></button>`;
+        const matchedItem = modalItems[modalIndexByCode[matchedCode]];
+        return `<button class="report-target-trigger report-tag-button" type="button" data-code="${{escapeHtml(matchedCode)}}" ${{renderReportHoverAttrs(matchedItem)}}><span class="report-tag">${{label}}</span></button>`;
       }}).join('');
       return `<div class="report-tags">${{html}}</div>`;
     }}
@@ -6492,21 +6646,39 @@ def build_html(
         if (dateA !== dateB) return dateB.localeCompare(dateA);
         return (b.createdAt || 0) - (a.createdAt || 0);
       }});
-      reportCountPill.textContent = `共 ${{entries.length}} 条`;
-      reportEmptyState.hidden = entries.length > 0;
-      reportTableBody.innerHTML = entries.map((entry, index) => `
-        <tr>
-          <td class="index-cell">${{index + 1}}</td>
-          <td class="nowrap-cell">${{escapeHtml(entry.date)}}</td>
-          <td>${{escapeHtml(entry.industry || '-')}}</td>
-          <td>
-            <div class="report-summary">
-              <p>${{escapeHtml(entry.summary || entry.content)}}</p>
-              ${{renderTargetTags(entry.targets)}}
-            </div>
-          </td>
-        </tr>
-      `).join('');
+      const hiddenIds = loadHiddenReportIds();
+      const hiddenCount = entries.filter(entry => hiddenIds.has(entry.id)).length;
+      const visibleEntries = showHiddenReports ? entries : entries.filter(entry => !hiddenIds.has(entry.id));
+      reportCountPill.textContent = hiddenCount
+        ? `共 ${{visibleEntries.length}} 条 · 隐藏 ${{hiddenCount}} 条`
+        : `共 ${{visibleEntries.length}} 条`;
+      reportEmptyState.hidden = visibleEntries.length > 0;
+      reportTableBody.innerHTML = visibleEntries.map((entry, index) => {{
+        const sourceId = `report-source-${{escapeHtml(entry.id)}}`;
+        const rawText = String(entry.rawText || '').trim();
+        const isHidden = hiddenIds.has(entry.id);
+        const rowClass = isHidden ? 'report-entry-row report-row-hidden' : 'report-entry-row';
+        const sourceRow = rawText
+          ? `<tr class="report-source-row" id="${{sourceId}}" hidden><td colspan="5"><div class="report-source-panel"><pre>${{escapeHtml(rawText)}}</pre></div></td></tr>`
+          : '';
+        return `
+          <tr class="${{rowClass}}" data-source-id="${{sourceId}}" data-has-source="${{rawText ? 'true' : 'false'}}" aria-expanded="false">
+            <td class="index-cell">${{index + 1}}</td>
+            <td>${{escapeHtml(entry.industry || '未分类')}}</td>
+            <td>
+              <div class="report-summary">
+                <p>${{escapeHtml(entry.summary || entry.content)}}</p>
+                ${{renderTargetTags(entry.targets)}}
+              </div>
+            </td>
+            <td class="nowrap-cell">${{escapeHtml(entry.date)}}</td>
+            <td class="report-hide-cell">
+              <input class="report-hide-checkbox" type="checkbox" data-report-id="${{escapeHtml(entry.id)}}" ${{isHidden ? 'checked' : ''}} aria-label="隐藏此条研究" />
+            </td>
+          </tr>
+          ${{sourceRow}}
+        `;
+      }}).join('');
     }}
 
     function renderSocialEntries() {{
@@ -6752,12 +6924,91 @@ def build_html(
       }}
     }});
 
+    function positionReportTargetHover(trigger) {{
+      if (!reportTargetHoverCard || reportTargetHoverCard.hidden) return;
+      const rect = trigger.getBoundingClientRect();
+      const gap = 8;
+      const margin = 10;
+      reportTargetHoverCard.style.left = '0px';
+      reportTargetHoverCard.style.top = '0px';
+      const cardRect = reportTargetHoverCard.getBoundingClientRect();
+      let left = rect.left;
+      let top = rect.bottom + gap;
+      left = Math.max(margin, Math.min(left, window.innerWidth - cardRect.width - margin));
+      if (top + cardRect.height > window.innerHeight - margin) {{
+        top = rect.top - cardRect.height - gap;
+      }}
+      top = Math.max(margin, top);
+      reportTargetHoverCard.style.left = `${{left}}px`;
+      reportTargetHoverCard.style.top = `${{top}}px`;
+    }}
+
+    function showReportTargetHover(trigger) {{
+      if (!reportTargetHoverCard || !trigger?.dataset.hoverTitle) return;
+      reportTargetHoverCard.innerHTML = `
+        <div class="report-hover-title">${{escapeHtml(trigger.dataset.hoverTitle)}}</div>
+        <div class="report-hover-lines">
+          <div class="report-hover-row"><span class="report-hover-label">股票市价</span><span class="report-hover-value">${{escapeHtml(trigger.dataset.hoverPrice || '暂无')}}</span></div>
+          <div class="report-hover-row"><span class="report-hover-label">市值</span><span class="report-hover-value">${{escapeHtml(trigger.dataset.hoverCap || '暂无')}}</span></div>
+          <div class="report-hover-row"><span class="report-hover-label">最近一日涨跌幅</span><span class="report-hover-value ${{escapeHtml(trigger.dataset.hoverPctClass || 'pct-flat')}}">${{escapeHtml(trigger.dataset.hoverPct || '暂无')}}</span></div>
+        </div>
+      `;
+      reportTargetHoverCard.hidden = false;
+      positionReportTargetHover(trigger);
+    }}
+
+    function hideReportTargetHover() {{
+      if (reportTargetHoverCard) {{
+        reportTargetHoverCard.hidden = true;
+      }}
+    }}
+
+    reportHiddenToggle?.addEventListener('change', () => {{
+      showHiddenReports = Boolean(reportHiddenToggle.checked);
+      hideReportTargetHover();
+      renderReportEntries();
+    }});
+
+    reportTableBody.addEventListener('mouseover', event => {{
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger) showReportTargetHover(trigger);
+    }});
+
+    reportTableBody.addEventListener('mouseout', event => {{
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger && !trigger.contains(event.relatedTarget)) hideReportTargetHover();
+    }});
+
+    reportTableBody.addEventListener('focusin', event => {{
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger) showReportTargetHover(trigger);
+    }});
+
+    reportTableBody.addEventListener('focusout', hideReportTargetHover);
+
     reportTableBody.addEventListener('click', event => {{
+      const hideCheckbox = event.target.closest('.report-hide-checkbox');
+      if (hideCheckbox) {{
+        event.stopPropagation();
+        setReportEntryHidden(hideCheckbox.dataset.reportId, hideCheckbox.checked);
+        hideReportTargetHover();
+        renderReportEntries();
+        return;
+      }}
       const trigger = event.target.closest('.report-target-trigger');
-      if (!trigger) return;
-      event.preventDefault();
-      event.stopPropagation();
-      openStockModalByCode(trigger.dataset.code);
+      if (trigger) {{
+        event.preventDefault();
+        event.stopPropagation();
+        openStockModalByCode(trigger.dataset.code);
+        return;
+      }}
+      const row = event.target.closest('.report-entry-row');
+      if (!row || row.dataset.hasSource !== 'true') return;
+      const sourceRow = document.getElementById(row.dataset.sourceId);
+      if (!sourceRow) return;
+      const nextHidden = !sourceRow.hidden;
+      sourceRow.hidden = nextHidden;
+      row.setAttribute('aria-expanded', String(!nextHidden));
     }});
 
     socialTableBody.addEventListener('click', event => {{

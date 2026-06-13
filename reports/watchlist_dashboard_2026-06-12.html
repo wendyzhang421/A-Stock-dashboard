@@ -856,6 +856,91 @@
       margin: 0;
       cursor: pointer;
     }
+    .report-head-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .report-hidden-toggle {
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .report-hidden-toggle input {
+      margin: 0;
+    }
+    .report-entry-row {
+      cursor: pointer;
+    }
+    .report-row-hidden {
+      opacity: 0.46;
+    }
+    .report-hide-cell {
+      text-align: center;
+    }
+    .report-hide-checkbox {
+      margin: 0;
+    }
+    .report-source-row td {
+      padding-top: 0;
+    }
+    .report-source-panel {
+      margin: 0 0 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-card);
+      background: var(--paper-2);
+      color: var(--ink);
+    }
+    .report-source-panel pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .report-target-hover-card {
+      position: fixed;
+      z-index: 40;
+      min-width: 190px;
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-card);
+      background: var(--paper-2);
+      color: var(--ink);
+      box-shadow: var(--shadow);
+      pointer-events: none;
+    }
+    .report-target-hover-card[hidden] {
+      display: none;
+    }
+    .report-hover-title {
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .report-hover-lines {
+      display: grid;
+      gap: 5px;
+    }
+    .report-hover-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      white-space: nowrap;
+      font-size: 11px;
+    }
+    .report-hover-label {
+      color: var(--muted);
+    }
+    .report-hover-value {
+      font-weight: 700;
+    }
     .report-summary {
       display: grid;
       gap: 6px;
@@ -3263,25 +3348,33 @@
       </section>
       <div class="section-head">
         <div>
-          <h2>录入结果</h2>
+          <h2>历史研究</h2>
           <p>系统会按核心观点、行业和涉及标的结构化展示</p>
         </div>
-        <span class="pill" id="report-count-pill">共 0 条</span>
+        <div class="report-head-actions">
+          <label class="pill report-hidden-toggle">
+            <input id="report-hidden-toggle" type="checkbox" />
+            <span>显示隐藏项</span>
+          </label>
+          <span class="pill" id="report-count-pill">共 0 条</span>
+        </div>
       </div>
-      <section class="summary-table-wrap">
+      <section class="summary-table-wrap" id="report-table-section">
         <table class="summary-table">
           <thead>
             <tr>
               <th>编号</th>
-              <th>日期</th>
               <th>行业</th>
               <th>核心观点</th>
+              <th>日期</th>
+              <th>隐藏</th>
             </tr>
           </thead>
           <tbody id="report-table-body"></tbody>
         </table>
         <div class="report-empty" id="report-empty-state">当前还没有录入任何投研内容。</div>
       </section>
+      <div class="report-target-hover-card" id="report-target-hover-card" hidden></div>
     </section>
     <section class="page-view" id="social-view" hidden>
       <section class="hero">
@@ -3627,8 +3720,11 @@
     const reportContentInput = document.getElementById('report-content-input');
     const reportSaveButton = document.getElementById('report-save-button');
     const reportTableBody = document.getElementById('report-table-body');
+    const reportTableSection = document.getElementById('report-table-section');
+    const reportHiddenToggle = document.getElementById('report-hidden-toggle');
     const reportEmptyState = document.getElementById('report-empty-state');
     const reportCountPill = document.getElementById('report-count-pill');
+    const reportTargetHoverCard = document.getElementById('report-target-hover-card');
     const reportActionNote = document.getElementById('report-action-note');
     const socialKolNameInput = document.getElementById('social-kol-name-input');
     const socialKolHandleInput = document.getElementById('social-kol-handle-input');
@@ -3682,9 +3778,10 @@
     const DASHBOARD_STATE_API_KEY = 'astock_dashboard_state_api_url_v1';
     const DASHBOARD_ADMIN_TOKEN_KEY = 'astock_dashboard_admin_token_v1';
     const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
+    const REPORT_HIDDEN_IDS_KEY = 'astock_report_hidden_ids_v1';
     const INITIAL_WATCHLIST_STATUS = {"002730.SZ": "removed", "688307.SH": "removed", "601908.SH": "removed", "301312.SZ": "removed", "600072.SH": "removed", "603629.SH": "removed", "300812.SZ": "removed", "000815.SZ": "removed", "688582.SH": "removed", "600666.SH": "removed", "002518.SZ": "removed", "301486.SZ": "removed", "300383.SZ": "removed"};
     const INITIAL_STRONG_JOIN_STATUS = {};
-    const INITIAL_REPORT_ENTRIES = [{"id": "report-1", "target": "澜起科技", "targets": ["澜起科技"], "content": "test", "summary": "test", "industry": "", "rawText": "test", "date": "2026-06-09", "createdAt": 1781002020707}, {"id": "report-1781146192409", "target": "PCB", "targets": ["PCB"], "content": "三季度关注PCB产业两个升级（rubin放量带动HVLP3-4超预期、国产化表处理加速）和一个涨价趋势。铜冠铜箔HVLP4良率提升至5成并进入批产；海亮股份预计26Q3 HVLP小批量，27年利润确定性增强；泰金新能受益于国产化表处理加速。", "summary": "三季度关注PCB产业两个升级（rubin放量带动HVLP3-4超预期、国产化表处理加速）和一个涨价趋势。铜冠铜箔HVLP4良率提升至5成并进入批产；海亮股份预计26Q3 HVLP小批量，27年利润确定性增强；泰金新能受益于国产化表处理加速。", "industry": "", "rawText": "PCB——三季度关注两个升级，和一个涨价趋势\n✅产业趋势一：rubin放量——hvlp3-4超预期。这里我们看到三个公司变化最大：\n第一，【铜冠铜箔】预计hvlp4良率从原来2-3成提高至5成，且二季度正式进入批产阶段，我们预计三季度良率能再上台阶。\n\n第二，❗️【海亮股份】之前PCB只有标箔，预计26Q3 hvlp正式对台光、台耀小批量。更重要的是27年40亿+利润确定性增强，当前11X PE。后续还将关注：海亮海外基地对胜宏科技等头部客户的赋能。\n\n第三，在调研这些企业时，同步发现国产化表处理加速（太卡脖子），【泰金新能】，后续还将关注：国内头部高端铜箔和表处理供应商的长期合作。", "date": "2025Q3", "createdAt": 1781146192409}, {"id": "report-1781263606337", "target": "迈为股份", "targets": ["迈为股份"], "content": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力，因钼替代钨成为3D NAND趋势，迈为设备在国内领先。", "summary": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力，因钼替代钨成为3D NAND趋势，迈为设备在国内领先。", "industry": "半导体设备", "rawText": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力！\n       据外媒报道，SK海力士已完成375层3D NAND 闪存的生产验证工作，该产品计划在今年年底前正式量产。此次迭代最大的技术亮点，在于使用钼材料替代传统钨材料制作字线。字线（Word Line） 是连接存储单元控制栅极的水平控制线，主要用于选择和操作特定行的存储单元。随着3D NAND堆叠层数愈多，传统钨材质短板凸显：线路细化后钨的电阻会显著上升，拖慢信号传输速率。同时钨在制程中还需要额外铺设阻挡辅助层，逐层叠加后会挤占空间、影响芯片集成密度。比较而言，在同等微缩尺寸下，钼的电阻更低，能够有效加快数据读写速度。且钼无需额外增设阻挡层，可直接完成填充，进一步提升芯片存储密度。\n       钼前驱体在常温下为固态，生产时必须借助专用设备进行高温加热，同时把控物料的供给量与输送速率，对设备和制程管控要求严苛。SK海力士选择采购东京电子（TEL）的设备。东电的炉式设备可一次性完成约100片晶圆的沉积作业，在设备采购成本、场地占用以及钼物料消耗上更具性价比。从行业层面来看，三星电子已率先落地钼材料工艺。该公司自2024年4月起量产286层第九代3D NAND，就已将钼应用在金属布线环节；未来在下一代存储方向上，以钼带钨成为大势所趋。\n       迈为在半导体设备布局中，前瞻布局钼基薄膜沉积设备，在国内具备行业领先水平，未来随着钼基技术的普及放量，迈为在存储设备领域有望弯道超车，大幅加速公司在半导体设备领域的成长空间，我们持续看好推荐", "date": "2026-06-11", "createdAt": 1781263606337}];
+    const INITIAL_REPORT_ENTRIES = [{"id": "report-1", "target": "澜起科技", "targets": ["澜起科技"], "content": "test", "summary": "test", "industry": "半导体芯片", "rawText": "test", "date": "2026-06-09", "createdAt": 1781002020707}, {"id": "report-1781146192409", "target": "PCB", "targets": ["PCB"], "content": "三季度关注PCB产业两个升级（rubin放量带动HVLP3-4超预期、国产化表处理加速）和一个涨价趋势。铜冠铜箔HVLP4良率提升至5成并进入批产；海亮股份预计26Q3 HVLP小批量，27年利润确定性增强；泰金新能受益于国产化表处理加速。", "summary": "三季度关注PCB产业两个升级（rubin放量带动HVLP3-4超预期、国产化表处理加速）和一个涨价趋势。铜冠铜箔HVLP4良率提升至5成并进入批产；海亮股份预计26Q3 HVLP小批量，27年利润确定性增强；泰金新能受益于国产化表处理加速。", "industry": "PCB/高端铜箔", "rawText": "PCB——三季度关注两个升级，和一个涨价趋势\n✅产业趋势一：rubin放量——hvlp3-4超预期。这里我们看到三个公司变化最大：\n第一，【铜冠铜箔】预计hvlp4良率从原来2-3成提高至5成，且二季度正式进入批产阶段，我们预计三季度良率能再上台阶。\n\n第二，❗️【海亮股份】之前PCB只有标箔，预计26Q3 hvlp正式对台光、台耀小批量。更重要的是27年40亿+利润确定性增强，当前11X PE。后续还将关注：海亮海外基地对胜宏科技等头部客户的赋能。\n\n第三，在调研这些企业时，同步发现国产化表处理加速（太卡脖子），【泰金新能】，后续还将关注：国内头部高端铜箔和表处理供应商的长期合作。", "date": "2025Q3", "createdAt": 1781146192409}, {"id": "report-1781263606337", "target": "迈为股份", "targets": ["迈为股份"], "content": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力，因钼替代钨成为3D NAND趋势，迈为设备在国内领先。", "summary": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力，因钼替代钨成为3D NAND趋势，迈为设备在国内领先。", "industry": "半导体设备", "rawText": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力！\n       据外媒报道，SK海力士已完成375层3D NAND 闪存的生产验证工作，该产品计划在今年年底前正式量产。此次迭代最大的技术亮点，在于使用钼材料替代传统钨材料制作字线。字线（Word Line） 是连接存储单元控制栅极的水平控制线，主要用于选择和操作特定行的存储单元。随着3D NAND堆叠层数愈多，传统钨材质短板凸显：线路细化后钨的电阻会显著上升，拖慢信号传输速率。同时钨在制程中还需要额外铺设阻挡辅助层，逐层叠加后会挤占空间、影响芯片集成密度。比较而言，在同等微缩尺寸下，钼的电阻更低，能够有效加快数据读写速度。且钼无需额外增设阻挡层，可直接完成填充，进一步提升芯片存储密度。\n       钼前驱体在常温下为固态，生产时必须借助专用设备进行高温加热，同时把控物料的供给量与输送速率，对设备和制程管控要求严苛。SK海力士选择采购东京电子（TEL）的设备。东电的炉式设备可一次性完成约100片晶圆的沉积作业，在设备采购成本、场地占用以及钼物料消耗上更具性价比。从行业层面来看，三星电子已率先落地钼材料工艺。该公司自2024年4月起量产286层第九代3D NAND，就已将钼应用在金属布线环节；未来在下一代存储方向上，以钼带钨成为大势所趋。\n       迈为在半导体设备布局中，前瞻布局钼基薄膜沉积设备，在国内具备行业领先水平，未来随着钼基技术的普及放量，迈为在存储设备领域有望弯道超车，大幅加速公司在半导体设备领域的成长空间，我们持续看好推荐", "date": "2026-06-11", "createdAt": 1781263606337}];
     const INITIAL_SOCIAL_TRACKERS = [];
     const INITIAL_SOCIAL_ENTRIES = [];
     const DEFAULT_DASHBOARD_STATE_API = (() => {
@@ -3699,6 +3796,7 @@
       : '';
     let dashboardStateSyncPromise = Promise.resolve();
     let dashboardStateBootstrapped = false;
+    let showHiddenReports = false;
 
     function normalizeReportEntry(entry, fallbackId) {
       if (!entry || typeof entry !== 'object') return null;
@@ -3717,7 +3815,7 @@
         targets: targets.length ? targets : (target ? [target] : []),
         content,
         summary: String(entry.summary || content).trim(),
-        industry: String(entry.industry || '').trim(),
+        industry: String(entry.industry || '未分类').trim(),
         rawText: String(entry.rawText || entry.content || '').trim(),
         date,
         createdAt,
@@ -3729,9 +3827,41 @@
       [...baseEntries, ...overlayEntries].forEach((entry, idx) => {
         const normalized = normalizeReportEntry(entry, `report-${idx + 1}`);
         if (!normalized) return;
+        const existing = merged.get(normalized.id);
+        if (
+          existing &&
+          (!normalized.industry || normalized.industry === '未分类') &&
+          existing.industry &&
+          existing.industry !== '未分类'
+        ) {
+          normalized.industry = existing.industry;
+        }
         merged.set(normalized.id, normalized);
       });
       return [...merged.values()];
+    }
+
+    function loadHiddenReportIds() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(REPORT_HIDDEN_IDS_KEY) || '[]');
+        return new Set(Array.isArray(parsed) ? parsed.map(id => String(id)) : []);
+      } catch (error) {
+        return new Set();
+      }
+    }
+
+    function saveHiddenReportIds(ids) {
+      window.localStorage.setItem(REPORT_HIDDEN_IDS_KEY, JSON.stringify([...ids]));
+    }
+
+    function setReportEntryHidden(id, hidden) {
+      const ids = loadHiddenReportIds();
+      if (hidden) {
+        ids.add(String(id));
+      } else {
+        ids.delete(String(id));
+      }
+      saveHiddenReportIds(ids);
     }
 
     function normalizeSocialEntry(entry, fallbackId) {
@@ -4229,7 +4359,30 @@
       }
       const matchedItem = modalItems[modalIndexByCode[matchedCode]];
       const codeText = matchedItem?.code ? `<span class="stock-code">${escapeHtml(matchedItem.code)}</span>` : '';
-      return `<button class="report-target-trigger" type="button" data-code="${escapeHtml(matchedCode)}"><span class="stock-name">${display}</span>${codeText}</button>`;
+      return `<button class="report-target-trigger" type="button" data-code="${escapeHtml(matchedCode)}" ${renderReportHoverAttrs(matchedItem)}><span class="stock-name">${display}</span>${codeText}</button>`;
+    }
+
+    function formatReportPrice(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric.toFixed(2) : '暂无';
+    }
+
+    function formatReportPct(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '暂无';
+      return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}%`;
+    }
+
+    function renderReportHoverAttrs(item) {
+      const title = item?.code ? `${item.name || item.code} · ${item.code}` : (item?.name || '标的信息');
+      const pctValue = item?.todayPct == null ? '' : Number(item.todayPct);
+      return [
+        `data-hover-title="${escapeHtml(title || '标的信息')}"`,
+        `data-hover-price="${escapeHtml(formatReportPrice(item?.latestClose))}"`,
+        `data-hover-cap="${escapeHtml(item?.totalMarketCap == null ? '暂无' : formatYiRmb(item.totalMarketCap))}"`,
+        `data-hover-pct="${escapeHtml(formatReportPct(item?.todayPct))}"`,
+        `data-hover-pct-class="${escapeHtml(pctClass(pctValue))}"`,
+      ].join(' ');
     }
 
     function renderTargetTags(targets) {
@@ -4238,9 +4391,10 @@
         const label = escapeHtml(target);
         const matchedCode = modalCodeByAlias[normalizeModalAlias(target)];
         if (!matchedCode) {
-          return `<span class="report-tag">${label}</span>`;
+          return `<span class="report-tag" ${renderReportHoverAttrs({ name: target })}>${label}</span>`;
         }
-        return `<button class="report-target-trigger report-tag-button" type="button" data-code="${escapeHtml(matchedCode)}"><span class="report-tag">${label}</span></button>`;
+        const matchedItem = modalItems[modalIndexByCode[matchedCode]];
+        return `<button class="report-target-trigger report-tag-button" type="button" data-code="${escapeHtml(matchedCode)}" ${renderReportHoverAttrs(matchedItem)}><span class="report-tag">${label}</span></button>`;
       }).join('');
       return `<div class="report-tags">${html}</div>`;
     }
@@ -4556,21 +4710,39 @@
         if (dateA !== dateB) return dateB.localeCompare(dateA);
         return (b.createdAt || 0) - (a.createdAt || 0);
       });
-      reportCountPill.textContent = `共 ${entries.length} 条`;
-      reportEmptyState.hidden = entries.length > 0;
-      reportTableBody.innerHTML = entries.map((entry, index) => `
-        <tr>
-          <td class="index-cell">${index + 1}</td>
-          <td class="nowrap-cell">${escapeHtml(entry.date)}</td>
-          <td>${escapeHtml(entry.industry || '-')}</td>
-          <td>
-            <div class="report-summary">
-              <p>${escapeHtml(entry.summary || entry.content)}</p>
-              ${renderTargetTags(entry.targets)}
-            </div>
-          </td>
-        </tr>
-      `).join('');
+      const hiddenIds = loadHiddenReportIds();
+      const hiddenCount = entries.filter(entry => hiddenIds.has(entry.id)).length;
+      const visibleEntries = showHiddenReports ? entries : entries.filter(entry => !hiddenIds.has(entry.id));
+      reportCountPill.textContent = hiddenCount
+        ? `共 ${visibleEntries.length} 条 · 隐藏 ${hiddenCount} 条`
+        : `共 ${visibleEntries.length} 条`;
+      reportEmptyState.hidden = visibleEntries.length > 0;
+      reportTableBody.innerHTML = visibleEntries.map((entry, index) => {
+        const sourceId = `report-source-${escapeHtml(entry.id)}`;
+        const rawText = String(entry.rawText || '').trim();
+        const isHidden = hiddenIds.has(entry.id);
+        const rowClass = isHidden ? 'report-entry-row report-row-hidden' : 'report-entry-row';
+        const sourceRow = rawText
+          ? `<tr class="report-source-row" id="${sourceId}" hidden><td colspan="5"><div class="report-source-panel"><pre>${escapeHtml(rawText)}</pre></div></td></tr>`
+          : '';
+        return `
+          <tr class="${rowClass}" data-source-id="${sourceId}" data-has-source="${rawText ? 'true' : 'false'}" aria-expanded="false">
+            <td class="index-cell">${index + 1}</td>
+            <td>${escapeHtml(entry.industry || '未分类')}</td>
+            <td>
+              <div class="report-summary">
+                <p>${escapeHtml(entry.summary || entry.content)}</p>
+                ${renderTargetTags(entry.targets)}
+              </div>
+            </td>
+            <td class="nowrap-cell">${escapeHtml(entry.date)}</td>
+            <td class="report-hide-cell">
+              <input class="report-hide-checkbox" type="checkbox" data-report-id="${escapeHtml(entry.id)}" ${isHidden ? 'checked' : ''} aria-label="隐藏此条研究" />
+            </td>
+          </tr>
+          ${sourceRow}
+        `;
+      }).join('');
     }
 
     function renderSocialEntries() {
@@ -4816,12 +4988,91 @@
       }
     });
 
+    function positionReportTargetHover(trigger) {
+      if (!reportTargetHoverCard || reportTargetHoverCard.hidden) return;
+      const rect = trigger.getBoundingClientRect();
+      const gap = 8;
+      const margin = 10;
+      reportTargetHoverCard.style.left = '0px';
+      reportTargetHoverCard.style.top = '0px';
+      const cardRect = reportTargetHoverCard.getBoundingClientRect();
+      let left = rect.left;
+      let top = rect.bottom + gap;
+      left = Math.max(margin, Math.min(left, window.innerWidth - cardRect.width - margin));
+      if (top + cardRect.height > window.innerHeight - margin) {
+        top = rect.top - cardRect.height - gap;
+      }
+      top = Math.max(margin, top);
+      reportTargetHoverCard.style.left = `${left}px`;
+      reportTargetHoverCard.style.top = `${top}px`;
+    }
+
+    function showReportTargetHover(trigger) {
+      if (!reportTargetHoverCard || !trigger?.dataset.hoverTitle) return;
+      reportTargetHoverCard.innerHTML = `
+        <div class="report-hover-title">${escapeHtml(trigger.dataset.hoverTitle)}</div>
+        <div class="report-hover-lines">
+          <div class="report-hover-row"><span class="report-hover-label">股票市价</span><span class="report-hover-value">${escapeHtml(trigger.dataset.hoverPrice || '暂无')}</span></div>
+          <div class="report-hover-row"><span class="report-hover-label">市值</span><span class="report-hover-value">${escapeHtml(trigger.dataset.hoverCap || '暂无')}</span></div>
+          <div class="report-hover-row"><span class="report-hover-label">最近一日涨跌幅</span><span class="report-hover-value ${escapeHtml(trigger.dataset.hoverPctClass || 'pct-flat')}">${escapeHtml(trigger.dataset.hoverPct || '暂无')}</span></div>
+        </div>
+      `;
+      reportTargetHoverCard.hidden = false;
+      positionReportTargetHover(trigger);
+    }
+
+    function hideReportTargetHover() {
+      if (reportTargetHoverCard) {
+        reportTargetHoverCard.hidden = true;
+      }
+    }
+
+    reportHiddenToggle?.addEventListener('change', () => {
+      showHiddenReports = Boolean(reportHiddenToggle.checked);
+      hideReportTargetHover();
+      renderReportEntries();
+    });
+
+    reportTableBody.addEventListener('mouseover', event => {
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger) showReportTargetHover(trigger);
+    });
+
+    reportTableBody.addEventListener('mouseout', event => {
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger && !trigger.contains(event.relatedTarget)) hideReportTargetHover();
+    });
+
+    reportTableBody.addEventListener('focusin', event => {
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger) showReportTargetHover(trigger);
+    });
+
+    reportTableBody.addEventListener('focusout', hideReportTargetHover);
+
     reportTableBody.addEventListener('click', event => {
+      const hideCheckbox = event.target.closest('.report-hide-checkbox');
+      if (hideCheckbox) {
+        event.stopPropagation();
+        setReportEntryHidden(hideCheckbox.dataset.reportId, hideCheckbox.checked);
+        hideReportTargetHover();
+        renderReportEntries();
+        return;
+      }
       const trigger = event.target.closest('.report-target-trigger');
-      if (!trigger) return;
-      event.preventDefault();
-      event.stopPropagation();
-      openStockModalByCode(trigger.dataset.code);
+      if (trigger) {
+        event.preventDefault();
+        event.stopPropagation();
+        openStockModalByCode(trigger.dataset.code);
+        return;
+      }
+      const row = event.target.closest('.report-entry-row');
+      if (!row || row.dataset.hasSource !== 'true') return;
+      const sourceRow = document.getElementById(row.dataset.sourceId);
+      if (!sourceRow) return;
+      const nextHidden = !sourceRow.hidden;
+      sourceRow.hidden = nextHidden;
+      row.setAttribute('aria-expanded', String(!nextHidden));
     });
 
     socialTableBody.addEventListener('click', event => {
