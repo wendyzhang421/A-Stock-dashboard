@@ -58,8 +58,6 @@ STRONG_MIN_TURNOVER = 5.0
 STRONG_MAX_TURNOVER = 25.0
 STRONG_DISPLAY_LIMIT = 20
 MARKET_INDEXES = [
-    ("上证指数", "000001.SH"),
-    ("深证成指", "399001.SZ"),
     ("创业板指", "399006.SZ"),
     ("沪深300", "000300.SH"),
     ("科创50", "000688.SH"),
@@ -1416,6 +1414,18 @@ def fetch_pe_ratios(access_token: str, codes: list[str]) -> dict[str, float | No
     return out
 
 
+def backfill_pe_ratios(access_token: str, rows: list[dict]) -> list[dict]:
+    codes = [row["code"] for row in rows if row.get("code") and row.get("peRatio") is None]
+    if not codes:
+        return rows
+    pe_map = fetch_pe_ratios(access_token, codes)
+    for row in rows:
+        value = pe_map.get(row.get("code"))
+        if value is not None:
+            row["peRatio"] = value
+    return rows
+
+
 def fetch_margin_financing_map(codes: list[str]) -> dict[str, dict[str, float | str | None]]:
     out: dict[str, dict[str, float | str | None]] = {}
     for code in codes:
@@ -2275,6 +2285,10 @@ def fetch_strong_stocks_via_ifind(access_token: str, trade_date: date) -> list[d
     history_map = fetch_history(access_token, codes)
 
     basic_map = fetch_basic(access_token, codes)
+    try:
+        pe_map = fetch_pe_ratios(access_token, codes)
+    except Exception:
+        pe_map = {}
 
     strong_rows: list[dict] = []
     for code in codes:
@@ -2349,7 +2363,7 @@ def fetch_strong_stocks_via_ifind(access_token: str, trade_date: date) -> list[d
                 "todayPct": code_to_pct.get(code),
                 "latestNews": {"time": "", "summary": "", "title": "", "link": "", "isRecent": False},
                 "research": empty_research_payload(),
-                "peRatio": None,
+                "peRatio": pe_map.get(code),
                 "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
                 "topHolders": {"reportDate": "", "totalRatio": None, "holders": []},
                 "businessSegments": {"reportDate": "", "category": "", "items": []},
@@ -2775,6 +2789,10 @@ def enrich_strong_stocks_for_modal(access_token: str, strong_rows: list[dict]) -
         history_map = fetch_history(access_token, codes)
     except Exception:
         history_map = {}
+    try:
+        pe_map = fetch_pe_ratios(access_token, codes)
+    except Exception:
+        pe_map = {}
 
     enriched: list[dict] = []
     for item in strong_rows:
@@ -2798,7 +2816,7 @@ def enrich_strong_stocks_for_modal(access_token: str, strong_rows: list[dict]) -
             {
                 **item,
                 "research": empty_research_payload(),
-                "peRatio": item.get("peRatio"),
+                "peRatio": item.get("peRatio") if item.get("peRatio") is not None else pe_map.get(item["code"]),
                 "marginFinancing": item.get("marginFinancing") or {
                     "date": "",
                     "finBalance": None,
@@ -2884,6 +2902,9 @@ def fetch_market_index_cards(access_token: str) -> list[dict[str, object]]:
         history = history_map.get(code) or {}
         table = history.get("table") or {}
         times = history.get("time") or []
+        opens = table.get("open") or []
+        highs = table.get("high") or []
+        lows = table.get("low") or []
         closes = table.get("close") or []
         amounts = table.get("amount") or []
         volumes = table.get("volume") or []
@@ -2903,6 +2924,17 @@ def fetch_market_index_cards(access_token: str) -> list[dict[str, object]]:
                 "pct": pct,
                 "amount": to_float(amounts[-1]) if amounts else None,
                 "volume": to_float(volumes[-1]) if volumes else None,
+                "miniKline": [
+                    {
+                        "date": times[i],
+                        "open": to_float(opens[i]) if i < len(opens) else None,
+                        "close": to_float(closes[i]) if i < len(closes) else None,
+                        "low": to_float(lows[i]) if i < len(lows) else None,
+                        "high": to_float(highs[i]) if i < len(highs) else None,
+                    }
+                    for i in range(max(0, len(times) - 18), len(times))
+                    if i < len(closes)
+                ],
                 "detail": INDEX_DETAIL_MAP.get(code),
             }
         )
@@ -3278,7 +3310,7 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
                 "kline": historical.get("kline") or seed["kline"],
                 "last5": historical.get("last5") or seed["last5"],
             }
-        needs_live_fill = code in mapped_codes and (
+        needs_live_fill = TRUST_ENV and code in mapped_codes and (
             not seed.get("kline")
             or not seed.get("latestClose")
             or not seed.get("totalMarketCap")
@@ -3292,7 +3324,7 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
                 seed["latestNews"] = fetch_latest_news_map([(name, code)]).get(code) or seed["latestNews"]
             except Exception:
                 pass
-        if not normalize_main_business_value(seed.get("industry")):
+        if TRUST_ENV and not normalize_main_business_value(seed.get("industry")):
             try:
                 seed["industry"] = fetch_industry(code) or seed.get("industry") or ""
             except Exception:
@@ -3330,7 +3362,7 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
             if not code or code in seen:
                 continue
             seen.add(code)
-            if not normalize_main_business_value(row.get("industry")):
+            if TRUST_ENV and not normalize_main_business_value(row.get("industry")):
                 try:
                     row["industry"] = fetch_industry(code) or row.get("industry") or ""
                 except Exception:
@@ -3386,47 +3418,115 @@ def build_html(
             "当前为缓存展示，不应视为当日实盘数据。"
             "</div>"
         )
-    overview_indices = market_overview.get("indices") or []
+    market_index_codes = [code for _, code in MARKET_INDEXES]
+    overview_indices_by_code = {item.get("code"): item for item in (market_overview.get("indices") or [])}
+    overview_indices = [overview_indices_by_code[code] for code in market_index_codes if code in overview_indices_by_code]
+    client_market_overview = {**market_overview, "indices": overview_indices}
     overview_trade_date = market_overview.get("tradeDate") or latest_market_date or AS_OF.isoformat()
+
+    def render_index_mini_kline(item: dict) -> str:
+        rows = []
+        for raw in item.get("miniKline") or []:
+            open_value = to_float(raw.get("open")) if isinstance(raw, dict) else None
+            close_value = to_float(raw.get("close")) if isinstance(raw, dict) else None
+            low_value = to_float(raw.get("low")) if isinstance(raw, dict) else None
+            high_value = to_float(raw.get("high")) if isinstance(raw, dict) else None
+            if open_value is None or close_value is None:
+                continue
+            low_value = min(v for v in [open_value, close_value, low_value] if v is not None)
+            high_value = max(v for v in [open_value, close_value, high_value] if v is not None)
+            rows.append((open_value, close_value, low_value, high_value))
+
+        latest_close = to_float(item.get("latestClose"))
+        pct = to_float(item.get("pct"))
+        if len(rows) < 2 and latest_close not in (None, 0) and pct is not None:
+            prev_close = latest_close / (1 + pct / 100) if pct != -100 else latest_close
+            steps = 8
+            rows = []
+            for idx in range(steps):
+                t = idx / max(steps - 1, 1)
+                close_value = prev_close + (latest_close - prev_close) * t
+                wave = (0.003 if idx % 2 == 0 else -0.002) * latest_close
+                open_value = prev_close + (latest_close - prev_close) * max(t - 0.12, 0) + wave
+                low_value = min(open_value, close_value) - abs(latest_close) * 0.003
+                high_value = max(open_value, close_value) + abs(latest_close) * 0.003
+                rows.append((open_value, close_value, low_value, high_value))
+
+        if not rows:
+            return """
+              <svg class="market-mini-kline" viewBox="0 0 128 56" role="img" aria-label="暂无K线缩略图">
+                <path class="mini-grid" d="M4 14H124M4 28H124M4 42H124" />
+                <path class="mini-empty" d="M10 36C30 28 48 32 66 24C86 16 104 24 118 18" />
+              </svg>
+            """
+
+        values = [value for row in rows for value in row]
+        low_bound = min(values)
+        high_bound = max(values)
+        if high_bound == low_bound:
+            high_bound = low_bound + 1
+
+        width = 128
+        height = 56
+        left = 6
+        right = 6
+        top = 7
+        bottom = 7
+        chart_width = width - left - right
+        chart_height = height - top - bottom
+
+        def y_pos(value: float) -> float:
+            return top + (high_bound - value) / (high_bound - low_bound) * chart_height
+
+        step = chart_width / max(len(rows), 1)
+        candle_width = max(2.2, min(5.0, step * 0.42))
+        body_parts = []
+        for idx, (open_value, close_value, low_value, high_value) in enumerate(rows):
+            x = left + step * idx + step / 2
+            y_open = y_pos(open_value)
+            y_close = y_pos(close_value)
+            y_low = y_pos(low_value)
+            y_high = y_pos(high_value)
+            body_y = min(y_open, y_close)
+            body_h = max(abs(y_close - y_open), 1.2)
+            cls = "rise" if close_value >= open_value else "fall"
+            body_parts.append(
+                f'<line class="mini-wick {cls}" x1="{x:.1f}" y1="{y_high:.1f}" x2="{x:.1f}" y2="{y_low:.1f}" />'
+                f'<rect class="mini-candle {cls}" x="{x - candle_width / 2:.1f}" y="{body_y:.1f}" width="{candle_width:.1f}" height="{body_h:.1f}" rx="0.7" />'
+            )
+        return (
+            '<svg class="market-mini-kline" viewBox="0 0 128 56" role="img" aria-label="指数K线缩略图">'
+            '<path class="mini-grid" d="M4 14H124M4 28H124M4 42H124" />'
+            + "".join(body_parts)
+            + "</svg>"
+        )
+
     index_cards_html = "".join(
         f"""
         <article class="market-card">
           <button class="market-card-button" type="button" {'data-index-code="' + str(item.get('code')) + '"' if item.get('detail') else 'disabled'}>
-            <div class="market-card-head">
-              <strong>{item.get('name') or '-'}</strong>
-              <span>{str(item.get('date') or overview_trade_date)[5:]}</span>
-            </div>
-            <div class="market-card-price-row">
-              <div class="market-card-price">{'-' if item.get('latestClose') is None else f"{float(item['latestClose']):,.2f}"}</div>
-              <div class="market-card-pct {'pct-rise' if (item.get('pct') or 0) > 0 else 'pct-fall' if (item.get('pct') or 0) < 0 else 'pct-flat'}">{'-' if item.get('pct') is None else f"{float(item['pct']):+.2f}%"}</div>
-            </div>
-            <div class="market-card-meta">
-              <span>成交额 {'-' if item.get('amount') is None else fmt_yi_rmb(float(item['amount']))}</span>
-              <span>{'点开看权重股' if item.get('detail') else ''}</span>
+            <div class="market-card-content">
+              <div class="market-card-main">
+                <div class="market-card-head">
+                  <strong>{item.get('name') or '-'}</strong>
+                  <span>{str(item.get('date') or overview_trade_date)[5:]}</span>
+                </div>
+                <div class="market-card-price-row">
+                  <div class="market-card-price">{'-' if item.get('latestClose') is None else f"{float(item['latestClose']):,.2f}"}</div>
+                  <div class="market-card-pct {'pct-rise' if (item.get('pct') or 0) > 0 else 'pct-fall' if (item.get('pct') or 0) < 0 else 'pct-flat'}">{'-' if item.get('pct') is None else f"{float(item['pct']):+.2f}%"}</div>
+                </div>
+                <div class="market-card-meta">
+                  <span>成交额 {'-' if item.get('amount') is None else fmt_yi_rmb(float(item['amount']))}</span>
+                </div>
+              </div>
+              <div class="market-card-chart">
+                {render_index_mini_kline(item)}
+              </div>
             </div>
           </button>
         </article>
         """
         for item in overview_indices
-    )
-    overview_metrics = [
-        ("A股成交额", "-" if market_overview.get("totalAmount") is None else fmt_yi_rmb(float(market_overview["totalAmount"]))),
-        ("A股成交量", "-" if market_overview.get("totalVolume") is None else f"{float(market_overview['totalVolume']) / 1e8:,.2f}亿手"),
-        ("沪市成交额", "-" if market_overview.get("shAmount") is None else fmt_yi_rmb(float(market_overview["shAmount"]))),
-        ("深市成交额", "-" if market_overview.get("szAmount") is None else fmt_yi_rmb(float(market_overview["szAmount"]))),
-        ("创业板成交额", "-" if market_overview.get("cybAmount") is None else fmt_yi_rmb(float(market_overview["cybAmount"]))),
-        ("科创50成交额", "-" if market_overview.get("kc50Amount") is None else fmt_yi_rmb(float(market_overview["kc50Amount"]))),
-        ("上涨指数数", "-" if market_overview.get("indexRiseCount") is None else str(int(market_overview["indexRiseCount"]))),
-        ("下跌指数数", "-" if market_overview.get("indexFallCount") is None else str(int(market_overview["indexFallCount"]))),
-    ]
-    overview_metrics_html = "".join(
-        f"""
-        <article class="market-stat">
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </article>
-        """
-        for label, value in overview_metrics
     )
     institution_rows_data = institution_holdings.get("rows") or []
     institution_probe = institution_holdings.get("ifindProbe") or {}
@@ -3495,21 +3595,36 @@ def build_html(
     current_modal_codes = {item.get("code") for item in (dataset + strong_stocks) if item.get("code")}
     report_modal_extras = load_report_modal_extras(current_modal_codes)
     modal_items = dataset + strong_stocks + report_modal_extras
-    table_rows = []
+    cap_groups = [
+        ("mega", "1000亿以上"),
+        ("large", "500-1000亿"),
+        ("small", "500亿以下"),
+    ]
+
+    def cap_group_key(item: dict) -> str:
+        cap = float(item.get("totalMarketCap") or 0)
+        if cap >= 1e11:
+            return "mega"
+        if cap >= 5e10:
+            return "large"
+        return "small"
+
+    def format_pe_cell(item: dict) -> str:
+        value = item.get("peRatio")
+        if value is None:
+            return "暂无"
+        try:
+            return f"{float(value):.2f}"
+        except Exception:
+            return "暂无"
+
+    watchlist_rows_by_cap = {key: [] for key, _ in cap_groups}
     for item in dataset:
         pct_class = "pct-rise" if (item["todayPct"] or 0) > 0 else "pct-fall" if (item["todayPct"] or 0) < 0 else "pct-flat"
-        news = item.get("latestNews") or {}
-        news_summary = news.get("summary") or "-"
-        news_time = news.get("time") or ""
-        news_link = news.get("link") or ""
-        news_html = (
-            f'<a class="news-link" href="{news_link}" target="_blank" rel="noreferrer"><span class="news-summary">{news_summary}</span><span class="news-time">{news_time}</span></a>'
-            if news_link
-            else f'<div class="news-summary">{news_summary}</div><div class="news-time">{news_time}</div>'
-        )
-        table_rows.append(
+        group_key = cap_group_key(item)
+        watchlist_rows_by_cap[cap_group_key(item)].append(
             f"""
-            <tr data-watchlist-row="true" data-code="{item['code']}" data-total-market-cap="{item['totalMarketCap'] or 0}" data-float-market-cap="{item['floatMarketCap'] or 0}" data-today-amount="{item['todayAmount'] or 0}" data-turnover-rate="{'' if item.get('turnoverRate') is None else item['turnoverRate']}" data-today-pct="{'' if item['todayPct'] is None else item['todayPct']}">
+            <tr data-watchlist-row="true" data-cap-group="{group_key}" data-code="{item['code']}" data-total-market-cap="{item['totalMarketCap'] or 0}" data-float-market-cap="{item['floatMarketCap'] or 0}" data-today-amount="{item['todayAmount'] or 0}" data-turnover-rate="{'' if item.get('turnoverRate') is None else item['turnoverRate']}" data-today-pct="{'' if item['todayPct'] is None else item['todayPct']}">
               <td class="index-cell" data-index-cell="watchlist"></td>
               <td data-search="{item['name']} {item['code']}">
                 <button class="stock-trigger" type="button" data-code="{item['code']}">
@@ -3523,7 +3638,7 @@ def build_html(
               <td class="nowrap-cell">{'-' if item.get('turnoverRate') is None else f"{item['turnoverRate']:.2f}%"}</td>
               <td class="nowrap-cell">{item['latestClose']:.2f}</td>
               <td class="{pct_class}">{'-' if item['todayPct'] is None else f"{item['todayPct']:+.2f}%"}</td>
-              <td class="news-cell">{news_html}</td>
+              <td class="nowrap-cell">{format_pe_cell(item)}</td>
               <td>
                 <select class="status-select" data-code="{item['code']}" aria-label="{item['name']}状态">
                   <option value="active">跟踪中</option>
@@ -3538,15 +3653,7 @@ def build_html(
         out = []
         for item in rows:
             pct_class = "pct-rise" if (item["todayPct"] or 0) > 0 else "pct-fall" if (item["todayPct"] or 0) < 0 else "pct-flat"
-            news = item.get("latestNews") or {}
-            news_summary = news.get("summary") or "-"
-            news_time = news.get("time") or ""
-            news_link = news.get("link") or ""
-            news_html = (
-                f'<a class="news-link" href="{news_link}" target="_blank" rel="noreferrer"><span class="news-summary">{news_summary}</span><span class="news-time">{news_time}</span></a>'
-                if news_link
-                else f'<div class="news-summary">{news_summary}</div><div class="news-time">{news_time}</div>'
-            )
+            group_key = cap_group_key(item)
             join_select_html = (
                 f'''
                     <select class="join-watchlist-select" data-code="{item['code']}" data-name="{item['name']}" data-watchlist-member="true" aria-label="{item['name']}跟踪状态">
@@ -3564,7 +3671,7 @@ def build_html(
             )
             out.append(
                 f"""
-                <tr data-strong-stock-row="true" data-code="{item['code']}" data-name="{item['name']}" data-main-business="{item['mainBusiness'] or '-'}" data-total-market-cap="{item['totalMarketCap'] or 0}" data-float-market-cap="{item['floatMarketCap'] or 0}" data-today-amount="{item['todayAmount'] or 0}" data-turnover-rate="{'' if item['turnoverRate'] is None else item['turnoverRate']}" data-today-pct="{'' if item['todayPct'] is None else item['todayPct']}">
+                <tr data-strong-stock-row="true" data-cap-group="{group_key}" data-code="{item['code']}" data-name="{item['name']}" data-main-business="{item['mainBusiness'] or '-'}" data-total-market-cap="{item['totalMarketCap'] or 0}" data-float-market-cap="{item['floatMarketCap'] or 0}" data-today-amount="{item['todayAmount'] or 0}" data-turnover-rate="{'' if item['turnoverRate'] is None else item['turnoverRate']}" data-today-pct="{'' if item['todayPct'] is None else item['todayPct']}">
                   <td class="index-cell" data-index-cell="{index_key}"></td>
                   <td data-search="{item['name']} {item['code']}">
                     <button class="stock-trigger strong-stock-trigger" type="button" data-code="{item['code']}">
@@ -3577,7 +3684,7 @@ def build_html(
                   <td class="nowrap-cell">{fmt_yi_rmb(item['todayAmount'])}</td>
                   <td class="nowrap-cell">{'-' if item['turnoverRate'] is None else f"{item['turnoverRate']:.2f}%"}</td>
                   <td class="{pct_class}">{'-' if item['todayPct'] is None else f"{item['todayPct']:+.2f}%"}</td>
-                  <td class="news-cell">{news_html}</td>
+                  <td class="nowrap-cell">{format_pe_cell(item)}</td>
                   <td>{join_select_html}</td>
                 </tr>
                 """
@@ -3585,7 +3692,52 @@ def build_html(
         return out
 
     watchlist_codes = {item["code"] for item in dataset}
-    strong_rows = build_momentum_rows(strong_stocks, "strong")
+    strong_rows_by_cap = {
+        key: build_momentum_rows([item for item in strong_stocks if cap_group_key(item) == key], "strong")
+        for key, _ in cap_groups
+    }
+
+    strong_head_html = """
+          <tr>
+            <th>编号</th>
+            <th>股票</th>
+            <th>主营方向</th>
+            <th>总市值 / 流通市值</th>
+            <th>当日成交额</th>
+            <th>换手率</th>
+            <th>当日涨幅</th>
+            <th>PE</th>
+            <th>加入自选</th>
+          </tr>
+    """
+    watchlist_head_html = """
+          <tr>
+            <th>编号</th>
+            <th>股票</th>
+            <th>主营方向</th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="floatMarketCap" data-default-direction="desc" data-active="true"><span>总市值 / 流通市值</span><span class="sort-indicator">↓</span></button></th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="todayAmount" data-default-direction="desc"><span>当日成交额</span><span class="sort-indicator">↕</span></button></th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="turnoverRate" data-default-direction="desc"><span>换手率</span><span class="sort-indicator">↕</span></button></th>
+            <th>最新收盘</th>
+            <th><button class="sort-button" type="button" data-watchlist-sort="todayPct" data-default-direction="desc"><span>当日涨幅</span><span class="sort-indicator">↕</span></button></th>
+            <th>PE</th>
+            <th>状态</th>
+          </tr>
+    """
+
+    def render_grouped_rows(rows_by_cap: dict[str, list[str]], colspan: int) -> str:
+        out = []
+        for key, _ in cap_groups:
+            rows = rows_by_cap.get(key) or []
+            if not rows:
+                continue
+            out.extend(rows)
+        if not out:
+            return f'<tr class="empty-group-row" data-empty-row="true"><td colspan="{colspan}">暂无符合股票</td></tr>'
+        return "".join(out)
+
+    strong_grouped_rows_html = render_grouped_rows(strong_rows_by_cap, 9)
+    watchlist_grouped_rows_html = render_grouped_rows(watchlist_rows_by_cap, 10)
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -3927,19 +4079,19 @@ def build_html(
       border-color: rgba(0,127,140,0.10);
     }}
     .market-overview {{
-      margin-top: 16px;
-      padding: 16px;
+      margin-top: 8px;
+      padding: 8px 10px;
     }}
     .market-overview-head {{
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      margin-bottom: 12px;
+      margin-bottom: 6px;
     }}
     .market-overview-head h2 {{
       margin: 0;
-      font-size: 16px;
+      font-size: 15px;
       line-height: 1.1;
       letter-spacing: -0.03em;
       color: #efffff;
@@ -3957,8 +4109,8 @@ def build_html(
     }}
     .market-index-grid {{
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
     }}
     .market-card {{
       border: 1px solid rgba(83,242,229,0.10);
@@ -3986,13 +4138,22 @@ def build_html(
       width: 100%;
       border: none;
       background: transparent;
-      padding: 12px 14px;
+      padding: 6px 8px;
       text-align: left;
       color: inherit;
       cursor: pointer;
     }}
     .market-card-button:disabled {{
       cursor: default;
+    }}
+    .market-card-content {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 128px;
+      gap: 8px;
+      align-items: center;
+    }}
+    .market-card-main {{
+      min-width: 0;
     }}
     .market-card-head {{
       display: flex;
@@ -4008,8 +4169,8 @@ def build_html(
       letter-spacing: -0.02em;
     }}
     .market-card-price {{
-      margin-top: 10px;
-      font-size: 28px;
+      margin-top: 4px;
+      font-size: 19px;
       font-weight: 800;
       letter-spacing: -0.04em;
       color: #f7ffff;
@@ -4028,29 +4189,68 @@ def build_html(
       gap: 8px;
     }}
     .market-card-pct {{
-      font-size: 18px;
+      font-size: 14px;
       font-weight: 800;
       letter-spacing: -0.03em;
     }}
     .market-card-meta {{
-      margin-top: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      font-size: 11px;
+      margin-top: 3px;
+      font-size: 10px;
       color: var(--muted);
     }}
+    .market-card-chart {{
+      width: 128px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-left: 1px solid rgba(83,242,229,0.08);
+      padding-left: 6px;
+    }}
+    body[data-theme="light"] .market-card-chart {{
+      border-left-color: rgba(0,127,140,0.08);
+    }}
+    .market-mini-kline {{
+      width: 128px;
+      height: 56px;
+      display: block;
+      overflow: visible;
+    }}
+    .mini-grid {{
+      fill: none;
+      stroke: rgba(142,165,174,0.20);
+      stroke-width: 0.8;
+    }}
+    .mini-wick {{
+      stroke-width: 1.1;
+      stroke-linecap: round;
+    }}
+    .mini-candle.rise,
+    .mini-wick.rise {{
+      fill: var(--rise);
+      stroke: var(--rise);
+    }}
+    .mini-candle.fall,
+    .mini-wick.fall {{
+      fill: var(--fall);
+      stroke: var(--fall);
+    }}
+    .mini-empty {{
+      fill: none;
+      stroke: var(--muted);
+      stroke-width: 2;
+      opacity: 0.55;
+    }}
     .market-stat-grid {{
-      margin-top: 10px;
+      margin-top: 8px;
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
+      gap: 8px;
     }}
     .market-stat {{
-      padding: 12px 14px;
+      padding: 8px 10px;
       border: 1px solid rgba(83,242,229,0.10);
-      border-radius: 18px;
+      border-radius: 8px;
       background: linear-gradient(180deg, rgba(12,23,34,0.92), rgba(8,16,25,0.96));
       clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
     }}
@@ -4061,8 +4261,8 @@ def build_html(
     }}
     .market-stat strong {{
       display: block;
-      margin-top: 8px;
-      font-size: 20px;
+      margin-top: 4px;
+      font-size: 16px;
       letter-spacing: -0.03em;
       color: #f2fffe;
     }}
@@ -4164,6 +4364,42 @@ def build_html(
       padding: 6px 10px 10px;
       overflow-x: auto;
     }}
+    .summary-table tbody tr[data-cap-group="mega"] td {{
+      background: rgba(31, 41, 55, 0.130);
+    }}
+    .summary-table tbody tr[data-cap-group="large"] td {{
+      background: rgba(31, 41, 55, 0.075);
+    }}
+    .summary-table tbody tr[data-cap-group="small"] td {{
+      background: rgba(31, 41, 55, 0.025);
+    }}
+    .summary-table tbody tr[data-cap-group="mega"]:hover td {{
+      background: rgba(31, 41, 55, 0.180);
+    }}
+    .summary-table tbody tr[data-cap-group="large"]:hover td {{
+      background: rgba(31, 41, 55, 0.125);
+    }}
+    .summary-table tbody tr[data-cap-group="small"]:hover td {{
+      background: rgba(31, 41, 55, 0.075);
+    }}
+    body[data-theme="dark"] .summary-table tbody tr[data-cap-group="mega"] td {{
+      background: rgba(255, 255, 255, 0.130);
+    }}
+    body[data-theme="dark"] .summary-table tbody tr[data-cap-group="large"] td {{
+      background: rgba(255, 255, 255, 0.080);
+    }}
+    body[data-theme="dark"] .summary-table tbody tr[data-cap-group="small"] td {{
+      background: rgba(255, 255, 255, 0.035);
+    }}
+    body[data-theme="dark"] .summary-table tbody tr[data-cap-group="mega"]:hover td {{
+      background: rgba(255, 255, 255, 0.190);
+    }}
+    body[data-theme="dark"] .summary-table tbody tr[data-cap-group="large"]:hover td {{
+      background: rgba(255, 255, 255, 0.135);
+    }}
+    body[data-theme="dark"] .summary-table tbody tr[data-cap-group="small"]:hover td {{
+      background: rgba(255, 255, 255, 0.085);
+    }}
     .removed-panel {{
       margin-top: 12px;
       padding: 10px 12px 12px;
@@ -4219,7 +4455,7 @@ def build_html(
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      margin: 22px 2px 8px;
+      margin: 16px 2px 6px;
     }}
     .section-head h2 {{
       margin: 0;
@@ -4239,13 +4475,13 @@ def build_html(
     }}
     .summary-table th,
     .summary-table td {{
-      padding: 10px 12px;
+      padding: 7px 9px;
       text-align: left;
       border-bottom: 1px solid rgba(83,242,229,0.08);
       vertical-align: middle;
     }}
     .index-cell {{
-      width: 48px;
+      width: 38px;
       text-align: center !important;
       color: var(--muted);
       white-space: nowrap;
@@ -4298,6 +4534,12 @@ def build_html(
     }}
     .summary-table tbody tr[data-watchlist-row="true"] {{
       cursor: pointer;
+    }}
+    .empty-group-row td {{
+      padding: 10px 9px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
     }}
     .holding-chip-list {{
       display: flex;
@@ -4862,6 +5104,13 @@ def build_html(
       .index-summary-grid {{
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }}
+      .market-card-content {{
+        grid-template-columns: minmax(0, 1fr) 96px;
+      }}
+      .market-card-chart,
+      .market-mini-kline {{
+        width: 96px;
+      }}
       .report-form-grid {{
         grid-template-columns: 1fr;
       }}
@@ -5140,16 +5389,13 @@ def build_html(
     <section class="market-overview panel">
       <div class="market-overview-head">
         <div>
-          <h2>整体市场</h2>
-          <p>指数用 iFinD，成交统计按沪市与深市主指数口径汇总</p>
+          <h2>整体市场指数</h2>
+          <p>仅保留创业板指、沪深300、科创50</p>
         </div>
         <span class="pill">统计日：{overview_trade_date}</span>
       </div>
       <div class="market-index-grid">
         {index_cards_html}
-      </div>
-      <div class="market-stat-grid">
-        {overview_metrics_html}
       </div>
     </section>
     <div class="section-head">
@@ -5161,20 +5407,10 @@ def build_html(
     <section class="summary-table-wrap">
       <table class="summary-table">
         <thead>
-          <tr>
-            <th>编号</th>
-            <th>股票</th>
-            <th>主营方向</th>
-            <th>总市值 / 流通市值</th>
-            <th>当日成交额</th>
-            <th>换手率</th>
-            <th>当日涨幅</th>
-            <th>最新新闻</th>
-            <th>加入自选</th>
-          </tr>
+          {strong_head_html}
         </thead>
-        <tbody id="strong-stocks-table-body">
-          {''.join(strong_rows)}
+        <tbody id="strong-stocks-table-body" class="strong-stocks-table-body">
+          {strong_grouped_rows_html}
         </tbody>
       </table>
     </section>
@@ -5187,21 +5423,10 @@ def build_html(
     <section class="summary-table-wrap">
       <table class="summary-table">
         <thead>
-          <tr>
-            <th>编号</th>
-            <th>股票</th>
-            <th>主营方向</th>
-            <th><button class="sort-button" type="button" data-watchlist-sort="floatMarketCap" data-default-direction="desc" data-active="true"><span>总市值 / 流通市值</span><span class="sort-indicator">↓</span></button></th>
-            <th><button class="sort-button" type="button" data-watchlist-sort="todayAmount" data-default-direction="desc"><span>当日成交额</span><span class="sort-indicator">↕</span></button></th>
-            <th><button class="sort-button" type="button" data-watchlist-sort="turnoverRate" data-default-direction="desc"><span>换手率</span><span class="sort-indicator">↕</span></button></th>
-            <th>最新收盘</th>
-            <th><button class="sort-button" type="button" data-watchlist-sort="todayPct" data-default-direction="desc"><span>当日涨幅</span><span class="sort-indicator">↕</span></button></th>
-            <th>最新新闻</th>
-            <th>状态</th>
-          </tr>
+          {watchlist_head_html}
         </thead>
-        <tbody id="watchlist-table-body">
-          {''.join(table_rows)}
+        <tbody id="watchlist-table-body" class="watchlist-table-body">
+          {watchlist_grouped_rows_html}
         </tbody>
       </table>
     </section>
@@ -5524,7 +5749,7 @@ def build_html(
     const dataset = {json.dumps(dataset, ensure_ascii=False)};
     const strongStocks = {json.dumps(strong_stocks, ensure_ascii=False)};
     const reportModalExtras = {json.dumps(report_modal_extras, ensure_ascii=False)};
-    const marketOverview = {json.dumps(market_overview, ensure_ascii=False)};
+    const marketOverview = {json.dumps(client_market_overview, ensure_ascii=False)};
     const institutionHoldings = {json.dumps(institution_holdings, ensure_ascii=False)};
     const datasetCodeSet = new Set(dataset.map(item => item.code));
     const momentumExtras = strongStocks.filter((item, idx, list) => {{
@@ -5710,7 +5935,7 @@ def build_html(
     const themeButtons = [...document.querySelectorAll('[data-theme-value]')];
     const modalChart = echarts.init(modalChartNode, null, {{ renderer: 'canvas' }});
     const DASHBOARD_VIEW_KEY = 'astock_dashboard_view_v1';
-    const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v1';
+    const DASHBOARD_THEME_KEY = 'astock_dashboard_theme_v2';
     const DASHBOARD_STATE_API_KEY = 'astock_dashboard_state_api_url_v1';
     const DASHBOARD_ADMIN_TOKEN_KEY = 'astock_dashboard_admin_token_v1';
     const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
@@ -5985,8 +6210,8 @@ def build_html(
       researchLoanBalance.textContent = marginFinancing.loanBalance == null ? '暂无' : ((marginFinancing.loanBalance / 1e8).toFixed(2) + '亿');
       researchFinBuyAmount.textContent = marginFinancing.finBuyAmount == null ? '暂无' : ((marginFinancing.finBuyAmount / 1e8).toFixed(2) + '亿');
       const latestNews = item.latestNews || {{}};
-      researchLatestNews.textContent = latestNews.summary
-        ? ((latestNews.time ? latestNews.time + '\\n' : '') + latestNews.summary)
+      researchLatestNews.innerHTML = latestNews.summary
+        ? `${{latestNews.time ? `<span class="news-time">${{escapeHtml(latestNews.time)}}</span><br />` : ''}}${{latestNews.link ? `<a class="news-link" href="${{escapeHtml(latestNews.link)}}" target="_blank" rel="noreferrer"><span class="news-summary">${{escapeHtml(latestNews.summary)}}</span></a>` : `<span class="news-summary">${{escapeHtml(latestNews.summary)}}</span>`}}`
         : '暂无';
       researchLogic.textContent = item.research.coreLogic || '暂无研究摘要';
       researchUsers.textContent = item.research.coreUsers || '暂无研究摘要';
@@ -6367,6 +6592,45 @@ def build_html(
     }}
 
     const watchlistSortState = {{ field: 'floatMarketCap', direction: 'desc' }};
+    const CAP_GROUP_ORDER = ['mega', 'large', 'small'];
+
+    function capGroupKeyFromValue(value) {{
+      const cap = Number(value) || 0;
+      if (cap >= 100000000000) return 'mega';
+      if (cap >= 50000000000) return 'large';
+      return 'small';
+    }}
+
+    function ensureRowCapGroup(row) {{
+      if (!row.dataset.capGroup) {{
+        row.dataset.capGroup = capGroupKeyFromValue(row.dataset.totalMarketCap);
+      }}
+      return row.dataset.capGroup;
+    }}
+
+    function rebuildGroupedTable(tbody, rowSelector, orderedRows) {{
+      const rows = orderedRows || [...tbody.querySelectorAll(rowSelector)];
+      const rowsByGroup = Object.fromEntries(CAP_GROUP_ORDER.map(key => [key, []]));
+      rows.forEach(row => {{
+        const key = ensureRowCapGroup(row);
+        if (!rowsByGroup[key]) rowsByGroup[key] = [];
+        rowsByGroup[key].push(row);
+      }});
+      CAP_GROUP_ORDER.forEach(key => {{
+        const groupRows = rowsByGroup[key] || [];
+        groupRows.forEach(row => tbody.appendChild(row));
+      }});
+      const emptyRow = tbody.querySelector('[data-empty-row="true"]');
+      if (emptyRow) {{
+        const visibleRows = rows.filter(row => row.style.display !== 'none');
+        emptyRow.style.display = visibleRows.length ? 'none' : '';
+      }}
+    }}
+
+    function refreshGroupedTables() {{
+      rebuildGroupedTable(strongStocksTableBody, 'tr[data-strong-stock-row="true"]');
+      rebuildGroupedTable(watchlistTableBody, 'tr[data-watchlist-row="true"]');
+    }}
 
     function parseRowNumber(row, key) {{
       const raw = row.dataset[key];
@@ -6403,7 +6667,7 @@ def build_html(
         if (primary !== 0) return primary;
         return Number(b.dataset.floatMarketCap || 0) - Number(a.dataset.floatMarketCap || 0);
       }});
-      rows.forEach(row => watchlistTableBody.appendChild(row));
+      rebuildGroupedTable(watchlistTableBody, 'tr[data-watchlist-row="true"]', rows);
       updateWatchlistSortIndicators();
       renumberTableRows();
     }}
@@ -6427,16 +6691,11 @@ def build_html(
       const turnoverText = item.turnoverRate == null ? '-' : Number(item.turnoverRate).toFixed(2) + '%';
       const latestCloseText = item.latestClose == null ? '-' : Number(item.latestClose).toFixed(2);
       const todayPctText = item.todayPct == null ? '-' : (Number(item.todayPct) >= 0 ? '+' : '') + Number(item.todayPct).toFixed(2) + '%';
+      const peText = item.peRatio == null ? '暂无' : Number(item.peRatio).toFixed(2);
       const pctCls = pctClass(item.todayPct);
-      const latestNews = item.latestNews || {{}};
-      const newsSummary = latestNews.summary || '-';
-      const newsTime = latestNews.time || '';
-      const newsHtml = latestNews.link
-        ? `<a class="news-link" href="${{latestNews.link}}" target="_blank" rel="noreferrer"><span class="news-summary">${{newsSummary}}</span><span class="news-time">${{newsTime}}</span></a>`
-        : `<div class="news-summary">${{newsSummary}}</div><div class="news-time">${{newsTime}}</div>`;
       const wrapper = document.createElement('tbody');
       wrapper.innerHTML = `
-        <tr data-watchlist-row="true" data-code="${{item.code}}" data-total-market-cap="${{Number(item.totalMarketCap || 0)}}" data-float-market-cap="${{Number(item.floatMarketCap || 0)}}" data-today-amount="${{Number(item.todayAmount || 0)}}" data-turnover-rate="${{item.turnoverRate == null ? '' : Number(item.turnoverRate)}}" data-today-pct="${{item.todayPct == null ? '' : Number(item.todayPct)}}" data-synthetic="true">
+        <tr data-watchlist-row="true" data-cap-group="${{capGroupKeyFromValue(item.totalMarketCap)}}" data-code="${{item.code}}" data-total-market-cap="${{Number(item.totalMarketCap || 0)}}" data-float-market-cap="${{Number(item.floatMarketCap || 0)}}" data-today-amount="${{Number(item.todayAmount || 0)}}" data-turnover-rate="${{item.turnoverRate == null ? '' : Number(item.turnoverRate)}}" data-today-pct="${{item.todayPct == null ? '' : Number(item.todayPct)}}" data-synthetic="true">
           <td class="index-cell" data-index-cell="watchlist"></td>
           <td data-search="${{item.name}} ${{item.code}}">
             <div class="strong-name-cell">
@@ -6450,7 +6709,7 @@ def build_html(
           <td>${{turnoverText}}</td>
           <td>${{latestCloseText}}</td>
           <td class="${{pctCls}}">${{todayPctText}}</td>
-          <td class="news-cell">${{newsHtml}}</td>
+          <td class="nowrap-cell">${{peText}}</td>
           <td>
             <select class="status-select" data-code="${{item.code}}" aria-label="${{item.name}}状态">
               <option value="active" selected>跟踪中</option>
@@ -6636,6 +6895,7 @@ def build_html(
         row.style.display = !isRemoved && matchesKeyword ? '' : 'none';
       }});
       renderRemovedList();
+      refreshGroupedTables();
       renumberTableRows();
     }}
 
@@ -6830,12 +7090,12 @@ def build_html(
     stockSearch.addEventListener('input', () => {{
       const keyword = stockSearch.value.trim().toLowerCase();
       document.querySelectorAll('.summary-table tbody tr').forEach(row => {{
+        if (row.dataset.emptyRow === 'true') return;
         if (row.dataset.watchlistRow === 'true') return;
         const haystack = (row.querySelector('td[data-search]')?.dataset.search || '').toLowerCase();
         row.style.display = !keyword || haystack.includes(keyword) ? '' : 'none';
       }});
       applyWatchlistVisibility();
-      renumberTableRows();
     }});
 
     reportSaveButton.addEventListener('click', async () => {{
@@ -7059,7 +7319,7 @@ def build_html(
     }};
     bootstrapDashboardState();
     const savedTheme = window.localStorage.getItem(DASHBOARD_THEME_KEY);
-    applyTheme(savedTheme || 'dark');
+    applyTheme(savedTheme || 'light');
     const savedView = window.localStorage.getItem(DASHBOARD_VIEW_KEY);
     const allowedViews = new Set(['market-view', 'institution-view', 'report-view', 'social-view']);
     setActiveView(allowedViews.has(savedView) ? savedView : 'market-view');
@@ -7160,6 +7420,7 @@ def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
         )
         item["latestNews"] = latest_news
         item["research"] = build_research_payload(code, item.get("research", {}))
+        item["peRatio"] = item.get("peRatio")
         item["marginFinancing"] = item.get("marginFinancing") or {
             "date": "",
             "finBalance": None,
@@ -7329,6 +7590,10 @@ def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
     if strong_codes:
         history_map = fetch_history(access_token, strong_codes)
         basic_map = fetch_basic(access_token, strong_codes)
+        try:
+            strong_pe_map = fetch_pe_ratios(access_token, strong_codes)
+        except Exception:
+            strong_pe_map = {}
         prev_strong_path = out_dir / f"watchlist_strong_stocks_{resolved_trade_date.isoformat()}.json"
         prev_strong_map = {}
         if prev_strong_path.exists():
@@ -7394,7 +7659,7 @@ def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
                 "todayPct": candidate["todayPct"],
                 "latestNews": latest_news,
                 "research": empty_research_payload(),
-                "peRatio": None,
+                "peRatio": strong_pe_map.get(code) if strong_pe_map.get(code) is not None else prev_row.get("peRatio"),
                 "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
                 "topHolders": {"reportDate": "", "totalRatio": None, "holders": []},
                 "businessSegments": {"reportDate": "", "category": "", "items": []},
@@ -7499,6 +7764,11 @@ def main() -> int:
             access_token = get_access_token()
         except Exception:
             access_token = None
+    if access_token is not None:
+        try:
+            strong_stocks = backfill_pe_ratios(access_token, strong_stocks)
+        except Exception:
+            pass
     market_overview = fetch_market_overview(access_token)
     institution_holdings = fetch_institution_holdings(access_token)
 
