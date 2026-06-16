@@ -17,6 +17,116 @@ function normalizeList(values, limit) {
     .slice(0, limit);
 }
 
+function decodeHtmlEntities(value) {
+  return String(value || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function extractTweetId(url) {
+  const text = String(url || "").trim();
+  const match = text.match(/(?:twitter\.com|x\.com)\/[^/]+\/status(?:es)?\/(\d+)/i);
+  return match ? match[1] : "";
+}
+
+function extractTweetHandle(url) {
+  const text = String(url || "").trim();
+  const match = text.match(/(?:twitter\.com|x\.com)\/([^/?#]+)\/status/i);
+  return match ? match[1].replace(/^@+/, "") : "";
+}
+
+function normalizeTweetUrl(url) {
+  const text = String(url || "").trim();
+  if (!text) return "";
+  return text.replace(/^https:\/\/twitter\.com\//i, "https://x.com/").split("?")[0];
+}
+
+async function fetchTweetViaSyndication(tweetId) {
+  const response = await fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${encodeURIComponent(tweetId)}&lang=en`, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 stockkiller-dashboard",
+      Accept: "application/json,text/plain,*/*",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`syndication fetch failed: ${response.status}`);
+  }
+  const payload = await response.json();
+  const text = decodeHtmlEntities(payload?.text || payload?.full_text || "");
+  if (!text) {
+    throw new Error("syndication returned empty tweet text");
+  }
+  const user = payload?.user || {};
+  return {
+    text,
+    kol: String(user.name || user.screen_name || "").trim(),
+    handle: String(user.screen_name || "").replace(/^@+/, "").trim(),
+    date: String(payload?.created_at || "").trim(),
+  };
+}
+
+async function fetchTweetViaOembed(url) {
+  const endpoint = `https://publish.twitter.com/oembed?omit_script=true&url=${encodeURIComponent(url)}`;
+  const response = await fetch(endpoint, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 stockkiller-dashboard",
+      Accept: "application/json,text/plain,*/*",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`oEmbed fetch failed: ${response.status}`);
+  }
+  const payload = await response.json();
+  const htmlText = decodeHtmlEntities(payload?.html || "");
+  const text = htmlText
+    .replace(/\s*—\s*.+?\(@[^)]+\)\s*[A-Z][a-z]+ \d{1,2}, \d{4}.*$/s, "")
+    .trim();
+  if (!text) {
+    throw new Error("oEmbed returned empty tweet text");
+  }
+  return {
+    text,
+    kol: String(payload?.author_name || "").trim(),
+    handle: extractTweetHandle(payload?.author_url || url),
+    date: "",
+  };
+}
+
+async function fetchTweetFromUrl(url) {
+  const normalizedUrl = normalizeTweetUrl(url);
+  const tweetId = extractTweetId(normalizedUrl);
+  if (!normalizedUrl || !tweetId) {
+    throw new Error("Invalid X tweet URL");
+  }
+  const errors = [];
+  try {
+    const result = await fetchTweetViaSyndication(tweetId);
+    return { ...result, tweetUrl: normalizedUrl };
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+  try {
+    const result = await fetchTweetViaOembed(normalizedUrl);
+    return { ...result, tweetUrl: normalizedUrl };
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+  throw new Error(`Unable to fetch tweet text: ${errors.join("; ")}`);
+}
+
 function getJsonFromText(text) {
   const cleaned = String(text || "").trim();
   if (!cleaned) {
@@ -27,20 +137,28 @@ function getJsonFromText(text) {
   return JSON.parse(candidate);
 }
 
-function sanitizeAnalysis(payload, rawText, fallbackDate, fallbackKol) {
+function sanitizeAnalysis(payload, rawText, fallbackDate, fallbackKol, sourceMeta = {}) {
   const kol = String(payload?.kol || fallbackKol || "").trim();
-  const target = String(payload?.target || "").trim();
+  const targets = normalizeList(payload?.targets, 12);
+  const target = String(payload?.target || targets[0] || "未提及").trim();
   const summary = String(payload?.summary || "").trim();
-  if (!kol || !target || !summary) {
-    throw new Error("Model output missing kol, target or summary");
+  const translatedText = String(payload?.translatedText || payload?.translation || "").trim();
+  if (!kol || !summary) {
+    throw new Error("Model output missing kol or summary");
   }
   return {
     kol,
-    platform: String(payload?.platform || "X / Grok").trim(),
+    handle: String(payload?.handle || sourceMeta.handle || "").replace(/^@+/, "").trim(),
+    platform: String(payload?.platform || "X").trim(),
     target,
-    date: String(payload?.date || fallbackDate || "").trim(),
+    targets: targets.length ? targets : (target && target !== "未提及" ? [target] : []),
+    industry: String(payload?.industry || "").trim(),
+    date: String(payload?.date || sourceMeta.date || fallbackDate || "").trim(),
     summary,
+    translatedText,
     rawText: String(rawText || "").trim(),
+    tweetUrl: String(sourceMeta.tweetUrl || "").trim(),
+    sourceUrl: String(sourceMeta.tweetUrl || "").trim(),
     stance: String(payload?.stance || "").trim(),
     tags: normalizeList(payload?.tags, 8),
     catalysts: normalizeList(payload?.catalysts, 6),
@@ -52,11 +170,14 @@ function sanitizeAnalysis(payload, rawText, fallbackDate, fallbackKol) {
 async function callXai({ apiKey, model, rawText, kol }) {
   const systemPrompt = [
     "你是A股社交媒体情绪与观点提炼助手。",
-    "请从用户提供的KOL原文中提取结构化关键信息。",
+    "请从用户提供的X推文原文中提取结构化关键信息，并翻译成中文。",
     "不要编造不存在的信息，无法确认就留空或给空数组。",
     "标签尽量贴近A股交易语境。",
+    "summary 必须用中文概括推文核心观点。",
+    "translatedText 必须是推文原文的中文翻译；如果原文已经是中文，就原样整理为中文。",
+    "target/targets 填涉及的股票、公司、行业主题或资产；没有明确提及时 target 填“未提及”。",
     "只输出一个JSON对象，不要输出任何额外说明。",
-    'JSON结构必须为：{"kol":"","platform":"X / Grok","target":"","date":"","summary":"","stance":"偏多|中性|偏谨慎","tags":[],"catalysts":[],"risks":[]}',
+    'JSON结构必须为：{"kol":"","handle":"","platform":"X","target":"","targets":[],"industry":"","date":"","summary":"","translatedText":"","stance":"偏多|中性|偏谨慎","tags":[],"catalysts":[],"risks":[]}',
   ].join("");
 
   const response = await fetch("https://api.x.ai/v1/chat/completions", {
@@ -73,7 +194,7 @@ async function callXai({ apiKey, model, rawText, kol }) {
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `KOL/来源：${kol || "未提供"}\n\n原文如下：\n${rawText}`,
+          content: `KOL/来源：${kol || "未提供"}\n\nX推文原文如下：\n${rawText}`,
         },
       ],
     }),
@@ -117,21 +238,32 @@ module.exports = async (req, res) => {
     }
 
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-    const rawText = String(body.text || "").trim();
+    const tweetUrl = normalizeTweetUrl(body.tweetUrl || body.url || "");
+    let rawText = String(body.text || "").trim();
     const date = String(body.date || "").trim();
-    const kol = String(body.kol || "").trim();
+    let kol = String(body.kol || "").trim();
+    let sourceMeta = { tweetUrl };
+    if (tweetUrl && !rawText) {
+      const tweet = await fetchTweetFromUrl(tweetUrl);
+      rawText = tweet.text;
+      kol = kol || tweet.kol || tweet.handle;
+      sourceMeta = {
+        tweetUrl: tweet.tweetUrl,
+        handle: tweet.handle || extractTweetHandle(tweet.tweetUrl),
+        date: tweet.date || "",
+      };
+    }
     if (!rawText) {
-      sendJson(res, 400, { error: "Missing text" });
+      sendJson(res, 400, { error: "Missing text or tweetUrl" });
       return;
     }
     if (!kol) {
-      sendJson(res, 400, { error: "Missing kol" });
-      return;
+      kol = extractTweetHandle(tweetUrl) || "X";
     }
 
     const model = String(process.env.XAI_MODEL || "grok-3-mini").trim();
     const structured = await callXai({ apiKey, model, rawText, kol });
-    const analysis = sanitizeAnalysis(structured, rawText, date, kol);
+    const analysis = sanitizeAnalysis(structured, rawText, date, kol, sourceMeta);
     sendJson(res, 200, { analysis });
   } catch (error) {
     sendJson(res, 500, {

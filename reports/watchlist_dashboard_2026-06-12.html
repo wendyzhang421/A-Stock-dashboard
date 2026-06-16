@@ -3517,6 +3517,18 @@
       </section>
       <section class="report-entry-panel">
         <div class="report-form-grid">
+          <div class="report-field full-span">
+            <label for="social-tweet-url-input">X 推文链接</label>
+            <input id="social-tweet-url-input" class="report-input" type="url" placeholder="粘贴 x.com 或 twitter.com 的单条推文链接" />
+          </div>
+        </div>
+        <div class="report-actions">
+          <span class="report-action-note" id="social-tweet-action-note">系统会抓取推文原文，翻译成中文并生成摘要后写入下方表格。</span>
+          <button id="social-tweet-save-button" class="report-save-button" type="button">总结并记录</button>
+        </div>
+      </section>
+      <section class="report-entry-panel">
+        <div class="report-form-grid">
           <div class="report-field">
             <label for="social-kol-name-input">KOL 名称</label>
             <input id="social-kol-name-input" class="report-input" type="text" placeholder="例如：某头部KOL" />
@@ -3571,8 +3583,10 @@
               <th>编号</th>
               <th>日期</th>
               <th>KOL</th>
+              <th>链接</th>
               <th>行业</th>
               <th>核心观点</th>
+              <th>中文翻译</th>
             </tr>
           </thead>
           <tbody id="social-table-body"></tbody>
@@ -3857,6 +3871,9 @@
     const socialKolHandleInput = document.getElementById('social-kol-handle-input');
     const socialKolPlatformInput = document.getElementById('social-kol-platform-input');
     const socialSaveButton = document.getElementById('social-save-button');
+    const socialTweetUrlInput = document.getElementById('social-tweet-url-input');
+    const socialTweetSaveButton = document.getElementById('social-tweet-save-button');
+    const socialTweetActionNote = document.getElementById('social-tweet-action-note');
     const socialTrackerTableBody = document.getElementById('social-tracker-table-body');
     const socialTrackerEmptyState = document.getElementById('social-tracker-empty-state');
     const socialTrackerCountPill = document.getElementById('social-tracker-count-pill');
@@ -3916,10 +3933,16 @@
       if (host === 'stockkiller.xyz' || host === 'www.stockkiller.xyz') {
         return 'https://api.stockkiller.xyz/api/dashboard-state';
       }
+      if (window.location.protocol === 'file:') {
+        return 'https://api.stockkiller.xyz/api/dashboard-state';
+      }
       return '';
     })();
     const DEFAULT_REPORT_ANALYZE_API = DEFAULT_DASHBOARD_STATE_API
       ? DEFAULT_DASHBOARD_STATE_API.replace('/dashboard-state', '/report-analyze')
+      : '';
+    const DEFAULT_SOCIAL_ANALYZE_API = DEFAULT_DASHBOARD_STATE_API
+      ? DEFAULT_DASHBOARD_STATE_API.replace('/dashboard-state', '/social-analyze')
       : '';
     let dashboardStateSyncPromise = Promise.resolve();
     let dashboardStateBootstrapped = false;
@@ -4014,6 +4037,9 @@
         summary: String(entry.summary || content).trim(),
         industry: String(entry.industry || '').trim(),
         rawText: String(entry.rawText || entry.content || '').trim(),
+        translatedText: String(entry.translatedText || entry.translation || '').trim(),
+        sourceUrl: String(entry.sourceUrl || entry.tweetUrl || entry.url || '').trim(),
+        tweetUrl: String(entry.tweetUrl || entry.sourceUrl || entry.url || '').trim(),
         sourceNote: String(entry.sourceNote || '').trim(),
         date,
         createdAt,
@@ -4060,6 +4086,10 @@
 
     function getReportAnalyzeApiUrl() {
       return window.localStorage.getItem(DASHBOARD_ANALYZE_API_KEY) || DEFAULT_REPORT_ANALYZE_API;
+    }
+
+    function getSocialAnalyzeApiUrl() {
+      return DEFAULT_SOCIAL_ANALYZE_API || getReportAnalyzeApiUrl().replace('/report-analyze', '/social-analyze');
     }
 
     function getDashboardAdminToken() {
@@ -4323,6 +4353,15 @@
       }
     }
 
+    function setSocialTweetActionNote(message, state = '') {
+      socialTweetActionNote.textContent = message;
+      if (state) {
+        socialTweetActionNote.dataset.state = state;
+      } else {
+        delete socialTweetActionNote.dataset.state;
+      }
+    }
+
     function buildDashboardStatePayload() {
       return {
         watchlistStatus: normalizeWatchlistStatusPayload(watchlistStatusMap),
@@ -4334,10 +4373,46 @@
     }
 
     async function requestDashboardAdminToken() {
-      const token = window.prompt('输入 Dashboard admin token 以开启云端同步');
-      if (!token) return '';
-      setDashboardAdminToken(token);
-      return token;
+      const existing = getDashboardAdminToken();
+      if (existing) return existing;
+      return new Promise(resolve => {
+        const dialog = document.createElement('div');
+        dialog.className = 'modal open';
+        dialog.setAttribute('aria-hidden', 'false');
+        dialog.innerHTML = `
+          <div class="modal-card" style="max-width: 460px;">
+            <div class="modal-head">
+              <div>
+                <h3>Dashboard admin token</h3>
+                <p>输入后会保存在本机浏览器，用于调用云端分析和同步结果。</p>
+              </div>
+              <button class="modal-close" type="button" data-token-cancel>×</button>
+            </div>
+            <div class="report-field full-span" style="margin-top: 14px;">
+              <label for="dashboard-admin-token-input">Admin token</label>
+              <input id="dashboard-admin-token-input" class="report-input" type="password" autocomplete="off" placeholder="粘贴 Dashboard admin token" />
+            </div>
+            <div class="report-actions">
+              <span class="report-action-note">Grok API key 保存在后端环境，不需要填在这里。</span>
+              <button class="report-save-button" type="button" data-token-save>保存</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(dialog);
+        const input = dialog.querySelector('#dashboard-admin-token-input');
+        const cleanup = token => {
+          if (token) setDashboardAdminToken(token);
+          dialog.remove();
+          resolve(token || '');
+        };
+        dialog.querySelector('[data-token-save]').addEventListener('click', () => cleanup(input.value.trim()));
+        dialog.querySelector('[data-token-cancel]').addEventListener('click', () => cleanup(''));
+        dialog.addEventListener('keydown', event => {
+          if (event.key === 'Enter') cleanup(input.value.trim());
+          if (event.key === 'Escape') cleanup('');
+        });
+        setTimeout(() => input.focus(), 0);
+      });
     }
 
     async function ensureDashboardAdminToken() {
@@ -4476,6 +4551,39 @@
         rawText: payload?.analysis?.rawText || rawText,
         createdAt: Date.now(),
       }, `report-${Date.now()}`);
+    }
+
+    async function analyzeSocialTweetUrl(tweetUrl) {
+      const apiUrl = getSocialAnalyzeApiUrl();
+      if (!apiUrl) {
+        throw new Error('未配置社交媒体分析接口');
+      }
+      const token = await ensureDashboardAdminToken();
+      if (!token) {
+        throw new Error('缺少 Dashboard admin token');
+      }
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Dashboard-Admin-Token': token,
+        },
+        body: JSON.stringify({ tweetUrl, date: '2026-06-12' }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.detail || payload?.error || `分析失败: ${response.status}`);
+      }
+      const analysis = payload.analysis || {};
+      return normalizeSocialEntry({
+        ...analysis,
+        id: analysis.id || `social-${Date.now()}`,
+        date: analysis.date || '2026-06-12',
+        content: analysis.summary || analysis.content || '',
+        sourceUrl: analysis.sourceUrl || analysis.tweetUrl || tweetUrl,
+        tweetUrl: analysis.tweetUrl || analysis.sourceUrl || tweetUrl,
+        createdAt: Date.now(),
+      }, `social-${Date.now()}`);
     }
 
     function renderReportTargetCell(target) {
@@ -4916,25 +5024,37 @@
       });
       socialCountPill.textContent = `共 ${entries.length} 条`;
       socialEmptyState.hidden = entries.length > 0;
-      socialTableBody.innerHTML = entries.map((entry, index) => `
-        <tr>
-          <td class="index-cell">${index + 1}</td>
-          <td class="nowrap-cell">${escapeHtml(entry.date)}</td>
-          <td>
-            <div class="report-summary">
-              <strong>${escapeHtml(entry.kol)}</strong>
-              <p>${escapeHtml(entry.handle ? '@' + entry.handle : (entry.platform || 'X'))}</p>
-            </div>
-          </td>
-          <td>${escapeHtml(entry.industry || '-')}</td>
-          <td>
-            <div class="report-summary">
-              <p>${escapeHtml(entry.summary || entry.content)}</p>
-              ${renderTargetTags(entry.targets)}
-            </div>
-          </td>
-        </tr>
-      `).join('');
+      socialTableBody.innerHTML = entries.map((entry, index) => {
+        const sourceUrl = entry.sourceUrl || entry.tweetUrl || '';
+        const sourceLink = sourceUrl
+          ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">原文</a>`
+          : '-';
+        return `
+          <tr>
+            <td class="index-cell">${index + 1}</td>
+            <td class="nowrap-cell">${escapeHtml(entry.date)}</td>
+            <td>
+              <div class="report-summary">
+                <strong>${escapeHtml(entry.kol)}</strong>
+                <p>${escapeHtml(entry.handle ? '@' + entry.handle : (entry.platform || 'X'))}</p>
+              </div>
+            </td>
+            <td class="nowrap-cell">${sourceLink}</td>
+            <td>${escapeHtml(entry.industry || '-')}</td>
+            <td>
+              <div class="report-summary">
+                <p>${escapeHtml(entry.summary || entry.content)}</p>
+                ${renderTargetTags(entry.targets)}
+              </div>
+            </td>
+            <td>
+              <div class="report-summary">
+                <p>${escapeHtml(entry.translatedText || entry.rawText || '-')}</p>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
     }
 
     function renderSocialTrackers() {
@@ -5093,6 +5213,45 @@
       } finally {
         reportSaveButton.disabled = false;
         reportSaveButton.textContent = originalLabel;
+      }
+    });
+
+    socialTweetSaveButton.addEventListener('click', async () => {
+      const tweetUrl = socialTweetUrlInput.value.trim();
+      if (!tweetUrl) {
+        window.alert('请先粘贴 X 推文链接。');
+        return;
+      }
+      if (!/(?:x\.com|twitter\.com)\/[^/]+\/status(?:es)?\/\d+/i.test(tweetUrl)) {
+        window.alert('请粘贴单条 X 推文链接，例如 https://x.com/user/status/123');
+        return;
+      }
+      const originalLabel = socialTweetSaveButton.textContent;
+      socialTweetSaveButton.disabled = true;
+      socialTweetSaveButton.textContent = '总结中...';
+      setSocialTweetActionNote('正在抓取推文并生成中文总结...', 'busy');
+      try {
+        const analyzedEntry = await analyzeSocialTweetUrl(tweetUrl);
+        if (!analyzedEntry) {
+          throw new Error('推文分析结果无效');
+        }
+        const entries = loadSocialEntries();
+        const normalizedUrl = (analyzedEntry.sourceUrl || analyzedEntry.tweetUrl || tweetUrl).split('?')[0];
+        const withoutSameUrl = entries.filter(entry => String(entry.sourceUrl || entry.tweetUrl || '').split('?')[0] !== normalizedUrl);
+        withoutSameUrl.push(analyzedEntry);
+        saveSocialEntries(withoutSameUrl);
+        socialTweetUrlInput.value = '';
+        renderSocialEntries();
+        syncSyntheticWatchlistRows();
+        await queueDashboardStateSync(undefined, { promptForToken: false });
+        setSocialTweetActionNote(`已记录：${analyzedEntry.kol} / ${analyzedEntry.target || '未提及'}`, '');
+      } catch (error) {
+        console.error(error);
+        setSocialTweetActionNote(error?.message || '推文总结失败，请稍后重试。', 'error');
+        window.alert(error?.message || '推文总结失败，请稍后重试。');
+      } finally {
+        socialTweetSaveButton.disabled = false;
+        socialTweetSaveButton.textContent = originalLabel;
       }
     });
 

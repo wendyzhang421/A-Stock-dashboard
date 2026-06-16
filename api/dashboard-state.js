@@ -86,16 +86,22 @@ function sanitizeSocialPosts(payload) {
     .map((item, index) => {
       if (!item || typeof item !== "object") return null;
       const kol = String(item.kol || item.source || "").trim();
-      const target = String(item.target || "").trim();
+      const targets = Array.isArray(item.targets)
+        ? item.targets.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 12)
+        : [];
+      const target = String(item.target || targets[0] || "未提及").trim();
       const content = String(item.content || item.summary || "").trim();
-      if (!kol || !target || !content) return null;
+      if (!kol || !content) return null;
       const date = String(item.date || "").trim();
       const createdAt = Number(item.createdAt || Date.now());
       const id = String(item.id || `social-${index + 1}-${createdAt}`);
       const summary = String(item.summary || content).trim();
       const rawText = String(item.rawText || item.content || "").trim();
+      const translatedText = String(item.translatedText || item.translation || "").trim();
       const stance = String(item.stance || "").trim();
       const platform = String(item.platform || "X / Grok").trim();
+      const industry = String(item.industry || "").trim();
+      const sourceUrl = String(item.sourceUrl || item.tweetUrl || item.url || "").trim();
       const tags = Array.isArray(item.tags)
         ? item.tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 8)
         : [];
@@ -110,9 +116,14 @@ function sanitizeSocialPosts(payload) {
         kol,
         platform,
         target,
+        targets: targets.length ? targets : (target && target !== "未提及" ? [target] : []),
+        industry,
         content,
         summary,
         rawText,
+        translatedText,
+        sourceUrl,
+        tweetUrl: sourceUrl,
         stance,
         tags,
         catalysts,
