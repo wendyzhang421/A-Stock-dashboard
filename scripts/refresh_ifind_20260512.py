@@ -108,6 +108,8 @@ def main() -> int:
     candidate_codes = [row["code"] for row in candidates]
     candidate_history_map = b.fetch_history(access, candidate_codes) if candidate_codes else {}
     candidate_basic_map = b.fetch_basic(access, candidate_codes) if candidate_codes else {}
+    candidate_pe_map = b.fetch_pe_ratios(access, candidate_codes) if candidate_codes else {}
+    print("strong-pe", len(candidate_pe_map), flush=True)
     candidate_news_map = b.fetch_latest_news_map([(row["name"], row["code"]) for row in candidates]) if candidates else {}
 
     def build_candidate_row(candidate: dict) -> dict | None:
@@ -144,9 +146,16 @@ def main() -> int:
         if total_market_cap <= 0 and float_market_cap > 0:
             total_market_cap = float_market_cap
         built = row
+        latest_news = candidate_news_map.get(code) or prev_strong_map.get(code, {}).get("latestNews") or built.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
+        industry = built.get("industry") or prev_strong_map.get(code, {}).get("industry") or ""
+        if not b.normalize_main_business_value(industry):
+            try:
+                industry = b.fetch_industry(code) or industry
+            except Exception:
+                pass
         built["code"] = code
         built["name"] = candidate["name"]
-        built["mainBusiness"] = built.get("mainBusiness") or b.MAIN_BUSINESS_MAP.get(code) or "-"
+        built["industry"] = industry
         built["latestClose"] = latest_close
         built["totalMarketCap"] = total_market_cap
         built["floatMarketCap"] = float_market_cap
@@ -154,12 +163,24 @@ def main() -> int:
         built["todayVolume"] = today_volume
         built["turnoverRate"] = turnover_rate
         built["todayPct"] = candidate["todayPct"]
-        built["latestNews"] = candidate_news_map.get(code) or prev_strong_map.get(code, {}).get("latestNews") or built.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
+        built["latestNews"] = latest_news
         built["topHolders"] = prev_strong_map.get(code, {}).get("topHolders") or built.get("topHolders") or {"reportDate": "", "totalRatio": None, "holders": []}
         built["businessSegments"] = prev_strong_map.get(code, {}).get("businessSegments") or built.get("businessSegments") or {"reportDate": "", "category": "", "items": []}
         built["topCustomers"] = prev_strong_map.get(code, {}).get("topCustomers") or built.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
+        built["mainBusiness"] = b.resolve_main_business(
+            code,
+            industry=industry,
+            existing=built.get("mainBusiness"),
+            business_segments=built.get("businessSegments"),
+            news_text=" ".join(
+                [
+                    latest_news.get("title", ""),
+                    latest_news.get("summary", ""),
+                ]
+            ),
+        )
         built["research"] = built.get("research") or b.empty_research_payload()
-        built["peRatio"] = built.get("peRatio")
+        built["peRatio"] = candidate_pe_map.get(code) if candidate_pe_map.get(code) is not None else built.get("peRatio")
         built["marginFinancing"] = built.get("marginFinancing") or {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None}
         if times and close_list and len(times) == len(close_list):
             built["kline"] = [[times[i], open_list[i], close_list[i], low_list[i], high_list[i], volume_list[i], amount_list[i]] for i in range(len(times))]
