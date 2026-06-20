@@ -6118,12 +6118,38 @@ def build_html(
       return [...merged.values()];
     }}
 
+    function normalizeDashboardApiUrl(rawUrl, fallbackUrl) {{
+      const fallback = String(fallbackUrl || '').trim();
+      const candidate = String(rawUrl || '').trim() || fallback;
+      if (!candidate) return '';
+      try {{
+        const url = new URL(candidate, window.location.href);
+        if ((url.hostname === 'stockkiller.xyz' || url.hostname === 'www.stockkiller.xyz') && url.pathname.startsWith('/api/')) {{
+          url.protocol = 'https:';
+          url.hostname = 'api.stockkiller.xyz';
+          return url.href;
+        }}
+        return url.href;
+      }} catch (error) {{
+        return fallback || candidate;
+      }}
+    }}
+
+    function getStoredDashboardApiUrl(storageKey, fallbackUrl) {{
+      const stored = window.localStorage.getItem(storageKey);
+      const normalized = normalizeDashboardApiUrl(stored, fallbackUrl);
+      if (stored && normalized && normalized !== String(stored).trim()) {{
+        window.localStorage.setItem(storageKey, normalized);
+      }}
+      return normalized;
+    }}
+
     function getDashboardStateApiUrl() {{
-      return window.localStorage.getItem(DASHBOARD_STATE_API_KEY) || DEFAULT_DASHBOARD_STATE_API;
+      return getStoredDashboardApiUrl(DASHBOARD_STATE_API_KEY, DEFAULT_DASHBOARD_STATE_API);
     }}
 
     function getReportAnalyzeApiUrl() {{
-      return window.localStorage.getItem(DASHBOARD_ANALYZE_API_KEY) || DEFAULT_REPORT_ANALYZE_API;
+      return getStoredDashboardApiUrl(DASHBOARD_ANALYZE_API_KEY, DEFAULT_REPORT_ANALYZE_API);
     }}
 
     function getSocialAnalyzeApiUrl() {{
@@ -6492,20 +6518,29 @@ def build_html(
       if (adminToken) {{
         headers['X-Dashboard-Admin-Token'] = adminToken;
       }}
-      let response = await fetch(apiUrl, {{
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      }});
+      let response;
+      try {{
+        response = await fetch(apiUrl, {{
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }});
+      }} catch (error) {{
+        throw new Error(`Dashboard state sync request failed: ${{apiUrl}} (${{error?.message || 'Failed to fetch'}})`);
+      }}
       if (response.status === 401 && allowRetry) {{
         const promptedToken = await requestDashboardAdminToken();
         if (promptedToken) {{
           headers['X-Dashboard-Admin-Token'] = promptedToken;
-          response = await fetch(apiUrl, {{
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-          }});
+          try {{
+            response = await fetch(apiUrl, {{
+              method: 'POST',
+              headers,
+              body: JSON.stringify(payload),
+            }});
+          }} catch (error) {{
+            throw new Error(`Dashboard state sync request failed: ${{apiUrl}} (${{error?.message || 'Failed to fetch'}})`);
+          }}
         }}
       }}
       if (!response.ok) {{
@@ -6571,14 +6606,19 @@ def build_html(
       if (!token) {{
         throw new Error('缺少 Dashboard admin token');
       }}
-      const response = await fetch(apiUrl, {{
-        method: 'POST',
-        headers: {{
-          'Content-Type': 'application/json',
-          'X-Dashboard-Admin-Token': token,
-        }},
-        body: JSON.stringify({{ text: rawText, date: pickedDate }}),
-      }});
+      let response;
+      try {{
+        response = await fetch(apiUrl, {{
+          method: 'POST',
+          headers: {{
+            'Content-Type': 'application/json',
+            'X-Dashboard-Admin-Token': token,
+          }},
+          body: JSON.stringify({{ text: rawText, date: pickedDate }}),
+        }});
+      }} catch (error) {{
+        throw new Error(`投研分析接口请求失败：${{apiUrl}}（${{error?.message || 'Failed to fetch'}}）`);
+      }}
       const payload = await response.json().catch(() => ({{}}));
       if (!response.ok) {{
         throw new Error(payload?.detail || payload?.error || `分析失败: ${{response.status}}`);
