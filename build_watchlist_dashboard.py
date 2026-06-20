@@ -4759,24 +4759,103 @@ def build_html(
     .report-hide-checkbox {{
       margin: 0;
     }}
-    .report-source-row td {{
-      padding-top: 0;
+    .report-drawer {{
+      position: fixed;
+      inset: 0;
+      z-index: 55;
+      display: flex;
+      justify-content: flex-end;
+      background: rgba(0, 0, 0, 0.34);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
     }}
-    .report-source-panel {{
-      margin: 0 0 8px;
-      padding: 10px 12px;
+    .report-drawer.open {{
+      opacity: 1;
+      pointer-events: auto;
+    }}
+    .report-drawer-panel {{
+      width: min(520px, calc(100vw - 28px));
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto 1fr;
       border: 1px solid var(--line);
-      border-radius: var(--radius-card);
+      border-right: 0;
+      border-radius: var(--radius-card) 0 0 var(--radius-card);
       background: var(--paper-2);
       color: var(--ink);
+      box-shadow: var(--shadow);
+      transform: translateX(100%);
+      transition: transform 0.22s ease;
+      overflow: hidden;
     }}
-    .report-source-panel pre {{
+    .report-drawer.open .report-drawer-panel {{
+      transform: translateX(0);
+    }}
+    .report-drawer-head {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 18px 18px 14px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .report-drawer-head h3 {{
+      margin: 0 0 6px;
+      font-size: 18px;
+      line-height: 1.25;
+    }}
+    .report-drawer-head p {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }}
+    .report-drawer-body {{
+      padding: 16px 18px 22px;
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 14px;
+    }}
+    .report-detail-meta {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    .report-detail-meta span {{
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 11px;
+      background: rgba(255,255,255,0.04);
+    }}
+    .report-detail-section {{
+      display: grid;
+      gap: 8px;
+    }}
+    .report-detail-section h4 {{
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+    }}
+    .report-detail-section p,
+    .report-detail-section pre {{
       margin: 0;
       white-space: pre-wrap;
       word-break: break-word;
       font: inherit;
       font-size: 12px;
       line-height: 1.6;
+    }}
+    .report-detail-source {{
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-card);
+      background: var(--paper);
+      max-height: 52vh;
+      overflow: auto;
     }}
     .report-target-hover-card {{
       position: fixed;
@@ -5581,6 +5660,32 @@ def build_html(
         <div class="report-empty" id="report-empty-state">当前还没有录入任何投研内容。</div>
       </section>
       <div class="report-target-hover-card" id="report-target-hover-card" hidden></div>
+      <div class="report-drawer" id="report-detail-drawer" aria-hidden="true">
+        <aside class="report-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="report-detail-title">
+          <div class="report-drawer-head">
+            <div>
+              <h3 id="report-detail-title">投研详情</h3>
+              <p id="report-detail-subtitle">点击历史研究行查看原文</p>
+            </div>
+            <button class="modal-close" id="report-detail-close" type="button" aria-label="关闭">×</button>
+          </div>
+          <div class="report-drawer-body">
+            <div class="report-detail-meta" id="report-detail-meta"></div>
+            <div class="report-detail-section">
+              <h4>涉及标的</h4>
+              <div id="report-detail-targets"></div>
+            </div>
+            <div class="report-detail-section">
+              <h4>核心观点</h4>
+              <p id="report-detail-summary">暂无</p>
+            </div>
+            <div class="report-detail-section">
+              <h4>输入原文</h4>
+              <pre class="report-detail-source" id="report-detail-source">暂无原文</pre>
+            </div>
+          </div>
+        </aside>
+      </div>
     </section>
     <section class="page-view" id="social-view" hidden>
       <section class="hero">
@@ -5945,6 +6050,14 @@ def build_html(
     const reportEmptyState = document.getElementById('report-empty-state');
     const reportCountPill = document.getElementById('report-count-pill');
     const reportTargetHoverCard = document.getElementById('report-target-hover-card');
+    const reportDetailDrawer = document.getElementById('report-detail-drawer');
+    const reportDetailClose = document.getElementById('report-detail-close');
+    const reportDetailTitle = document.getElementById('report-detail-title');
+    const reportDetailSubtitle = document.getElementById('report-detail-subtitle');
+    const reportDetailMeta = document.getElementById('report-detail-meta');
+    const reportDetailTargets = document.getElementById('report-detail-targets');
+    const reportDetailSummary = document.getElementById('report-detail-summary');
+    const reportDetailSource = document.getElementById('report-detail-source');
     const reportActionNote = document.getElementById('report-action-note');
     const socialKolNameInput = document.getElementById('social-kol-name-input');
     const socialKolHandleInput = document.getElementById('social-kol-handle-input');
@@ -6783,6 +6896,31 @@ def build_html(
       return `<div class="report-tags">${{html}}</div>`;
     }}
 
+    function openReportDetailDrawer(reportId) {{
+      const entry = loadReportEntries().find(item => item.id === reportId);
+      if (!entry) return;
+      const title = entry.target || (Array.isArray(entry.targets) && entry.targets[0]) || entry.industry || '投研详情';
+      const subtitleParts = [entry.industry || '未分类', entry.date || '无日期'].filter(Boolean);
+      const metaItems = [
+        entry.industry ? `行业：${{entry.industry}}` : '',
+        entry.date ? `日期：${{entry.date}}` : '',
+        Array.isArray(entry.targets) && entry.targets.length ? `标的：${{entry.targets.length}} 个` : '',
+      ].filter(Boolean);
+      reportDetailTitle.textContent = title;
+      reportDetailSubtitle.textContent = subtitleParts.join(' · ');
+      reportDetailMeta.innerHTML = metaItems.map(item => `<span>${{escapeHtml(item)}}</span>`).join('');
+      reportDetailTargets.innerHTML = renderTargetTags(entry.targets) || '<span class="report-tag">未提及</span>';
+      reportDetailSummary.textContent = entry.summary || entry.content || '暂无';
+      reportDetailSource.textContent = entry.rawText || '暂无原文';
+      reportDetailDrawer.classList.add('open');
+      reportDetailDrawer.setAttribute('aria-hidden', 'false');
+    }}
+
+    function closeReportDetailDrawer() {{
+      reportDetailDrawer.classList.remove('open');
+      reportDetailDrawer.setAttribute('aria-hidden', 'true');
+    }}
+
     function setSelectVisualState(select) {{
       select.dataset.state = select.value;
     }}
@@ -7137,15 +7275,10 @@ def build_html(
         : `共 ${{visibleEntries.length}} 条`;
       reportEmptyState.hidden = visibleEntries.length > 0;
       reportTableBody.innerHTML = visibleEntries.map((entry, index) => {{
-        const sourceId = `report-source-${{escapeHtml(entry.id)}}`;
-        const rawText = String(entry.rawText || '').trim();
         const isHidden = hiddenIds.has(entry.id);
         const rowClass = isHidden ? 'report-entry-row report-row-hidden' : 'report-entry-row';
-        const sourceRow = rawText
-          ? `<tr class="report-source-row" id="${{sourceId}}" hidden><td colspan="5"><div class="report-source-panel"><pre>${{escapeHtml(rawText)}}</pre></div></td></tr>`
-          : '';
         return `
-          <tr class="${{rowClass}}" data-source-id="${{sourceId}}" data-has-source="${{rawText ? 'true' : 'false'}}" aria-expanded="false">
+          <tr class="${{rowClass}}" data-report-id="${{escapeHtml(entry.id)}}">
             <td class="index-cell">${{index + 1}}</td>
             <td>${{escapeHtml(entry.industry || '未分类')}}</td>
             <td>
@@ -7159,7 +7292,6 @@ def build_html(
               <input class="report-hide-checkbox" type="checkbox" data-report-id="${{escapeHtml(entry.id)}}" ${{isHidden ? 'checked' : ''}} aria-label="隐藏此条研究" />
             </td>
           </tr>
-          ${{sourceRow}}
         `;
       }}).join('');
     }}
@@ -7520,6 +7652,36 @@ def build_html(
 
     reportTableBody.addEventListener('focusout', hideReportTargetHover);
 
+    reportDetailDrawer.addEventListener('mouseover', event => {{
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger) showReportTargetHover(trigger);
+    }});
+
+    reportDetailDrawer.addEventListener('mouseout', event => {{
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger && !trigger.contains(event.relatedTarget)) hideReportTargetHover();
+    }});
+
+    reportDetailDrawer.addEventListener('focusin', event => {{
+      const trigger = event.target.closest('.report-target-trigger, .report-tag[data-hover-title]');
+      if (trigger) showReportTargetHover(trigger);
+    }});
+
+    reportDetailDrawer.addEventListener('focusout', hideReportTargetHover);
+
+    reportDetailDrawer.addEventListener('click', event => {{
+      const trigger = event.target.closest('.report-target-trigger');
+      if (trigger) {{
+        event.preventDefault();
+        event.stopPropagation();
+        openStockModalByCode(trigger.dataset.code);
+        return;
+      }}
+      if (event.target === reportDetailDrawer) {{
+        closeReportDetailDrawer();
+      }}
+    }});
+
     reportTableBody.addEventListener('click', event => {{
       const hideCheckbox = event.target.closest('.report-hide-checkbox');
       if (hideCheckbox) {{
@@ -7537,12 +7699,8 @@ def build_html(
         return;
       }}
       const row = event.target.closest('.report-entry-row');
-      if (!row || row.dataset.hasSource !== 'true') return;
-      const sourceRow = document.getElementById(row.dataset.sourceId);
-      if (!sourceRow) return;
-      const nextHidden = !sourceRow.hidden;
-      sourceRow.hidden = nextHidden;
-      row.setAttribute('aria-expanded', String(!nextHidden));
+      if (!row) return;
+      openReportDetailDrawer(row.dataset.reportId);
     }});
 
     socialTableBody.addEventListener('click', event => {{
@@ -7602,6 +7760,7 @@ def build_html(
     modal.addEventListener('click', event => {{
       if (event.target === modal) closeStockModal();
     }});
+    reportDetailClose.addEventListener('click', closeReportDetailDrawer);
     indexModalClose.addEventListener('click', closeIndexModal);
     indexModal.addEventListener('click', event => {{
       if (event.target === indexModal) closeIndexModal();
@@ -7610,6 +7769,7 @@ def build_html(
       if (event.key === 'Escape') {{
         closeStockModal();
         closeIndexModal();
+        closeReportDetailDrawer();
       }}
     }});
     window.addEventListener('resize', () => modalChart.resize());
