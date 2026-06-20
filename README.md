@@ -288,6 +288,7 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 XAI_API_KEY=你的 xAI / Grok API Key
 XAI_MODEL=grok-3-mini
+X_BEARER_TOKEN=你的 X/Twitter API Bearer Token（可选，用于自动抓取 KOL 时间线）
 ```
 
 说明：
@@ -299,6 +300,23 @@ XAI_MODEL=grok-3-mini
 - `OPENAI_API_KEY` 用于 `LLM_PROVIDER=openai`
 - `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` 用于 `LLM_PROVIDER=deepseek`
 - `XAI_API_KEY` / `XAI_MODEL` 用于社交媒体观点提取接口
+- `X_BEARER_TOKEN` 用于每日自动抓取 KOL 最近推文；未配置时，定时脚本会尝试公共 RSS/Nitter 源，但稳定性不如官方 API
+
+### GitHub Actions 每日 KOL 摘要
+
+每日刷新 workflow 会先运行：
+
+```bash
+python scripts/refresh_social_media.py
+```
+
+它会读取 `reports/social_kol_watchlist.json` 中启用的 KOL，抓取最近 24 小时推文，调用 Grok 生成中文摘要，并写入 `reports/social_media_posts.json`。要让云端定时任务真正可用，需要在 GitHub 仓库 Secrets 中配置：
+
+```text
+XAI_API_KEY
+XAI_MODEL（可选）
+X_BEARER_TOKEN（推荐）
+```
 
 ### 前端如何工作
 

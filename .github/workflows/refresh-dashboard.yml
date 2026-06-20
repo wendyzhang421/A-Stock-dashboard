@@ -28,6 +28,10 @@ jobs:
       ASTOCK_TRUST_ENV: "0"
       ASTOCK_IFIND_REFRESH_TOKEN: ${{ secrets.ASTOCK_IFIND_REFRESH_TOKEN }}
       ASTOCK_AS_OF: ${{ github.event.inputs.as_of || '' }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      XAI_MODEL: ${{ secrets.XAI_MODEL || 'grok-3-mini' }}
+      X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+      TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -52,6 +56,18 @@ jobs:
           else
             echo "value=$(TZ=Asia/Shanghai date +%F)" >> "${GITHUB_OUTPUT}"
           fi
+
+      - name: Refresh social media summaries
+        shell: bash
+        run: |
+          set +e
+          python scripts/refresh_social_media.py
+          status=$?
+          if [ "${status}" -ne 0 ]; then
+            echo "Social media refresh failed; continuing dashboard refresh."
+            echo "Social media refresh failed; continuing dashboard refresh." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          exit 0
 
       - name: Refresh dashboard
         shell: bash
