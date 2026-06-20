@@ -25,10 +25,39 @@ function extractResponseText(payload) {
   return parts.join("\n").trim();
 }
 
+function normalizeTargetLabel(value) {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") {
+    const text = String(value).trim();
+    return text === "[object Object]" ? "" : text;
+  }
+  if (typeof value !== "object") return "";
+  const candidates = [
+    value.name,
+    value.stockName,
+    value.shortName,
+    value.company,
+    value.target,
+    value.label,
+    value.title,
+    value.code,
+    value.symbol,
+  ];
+  for (const candidate of candidates) {
+    const text = normalizeTargetLabel(candidate);
+    if (text) return text;
+  }
+  for (const candidate of Object.values(value)) {
+    const text = normalizeTargetLabel(candidate);
+    if (text) return text;
+  }
+  return "";
+}
+
 function normalizeList(values, limit) {
   if (!Array.isArray(values)) return [];
   return values
-    .map((value) => String(value || "").trim())
+    .map(normalizeTargetLabel)
     .filter(Boolean)
     .slice(0, limit);
 }

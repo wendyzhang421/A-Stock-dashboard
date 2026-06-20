@@ -128,6 +128,47 @@ def load_watchlist_state_payload() -> dict[str, object]:
     }
 
 
+def normalize_target_label(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float)):
+        text = str(value).strip()
+        return "" if text == "[object Object]" else text
+    if isinstance(value, dict):
+        for key in (
+            "name",
+            "stockName",
+            "shortName",
+            "company",
+            "target",
+            "label",
+            "title",
+            "code",
+            "symbol",
+        ):
+            text = normalize_target_label(value.get(key))
+            if text:
+                return text
+        for nested in value.values():
+            text = normalize_target_label(nested)
+            if text:
+                return text
+    return ""
+
+
+def normalize_target_list(values, limit: int = 12) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    out: list[str] = []
+    for value in values:
+        text = normalize_target_label(value)
+        if text:
+            out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def load_research_report_entries() -> list[dict]:
     if not RESEARCH_REPORTS_PATH.exists():
         return []
@@ -141,11 +182,11 @@ def load_research_report_entries() -> list[dict]:
     for idx, item in enumerate(payload, start=1):
         if not isinstance(item, dict):
             continue
-        target = str(item.get("target") or "").strip()
+        target = normalize_target_label(item.get("target"))
         content = str(item.get("content") or "").strip()
         summary = str(item.get("summary") or content).strip()
         industry = str(item.get("industry") or "未分类").strip()
-        targets = [str(tag).strip() for tag in (item.get("targets") or []) if str(tag).strip()][:12]
+        targets = normalize_target_list(item.get("targets") or [])
         if not summary:
             continue
         if not targets and target:
@@ -183,8 +224,8 @@ def load_social_media_entries() -> list[dict]:
         content = str(item.get("content") or item.get("summary") or "").strip()
         summary = str(item.get("summary") or content).strip()
         industry = str(item.get("industry") or "").strip()
-        targets = [str(tag).strip() for tag in (item.get("targets") or []) if str(tag).strip()][:12]
-        target = str(item.get("target") or (targets[0] if targets else "")).strip()
+        targets = normalize_target_list(item.get("targets") or [])
+        target = normalize_target_label(item.get("target")) or (targets[0] if targets else "")
         if not kol or not summary:
             continue
         source_url = str(item.get("sourceUrl") or item.get("tweetUrl") or item.get("url") or "").strip()
@@ -5986,13 +6027,45 @@ def build_html(
     let dashboardStateBootstrapped = false;
     let showHiddenReports = false;
 
+    function normalizeTargetLabel(value) {{
+      if (value == null) return '';
+      if (typeof value === 'string' || typeof value === 'number') {{
+        const text = String(value).trim();
+        return text === '[object Object]' ? '' : text;
+      }}
+      if (typeof value !== 'object') return '';
+      const candidates = [
+        value.name,
+        value.stockName,
+        value.shortName,
+        value.company,
+        value.target,
+        value.label,
+        value.title,
+        value.code,
+        value.symbol,
+      ];
+      for (const candidate of candidates) {{
+        const text = normalizeTargetLabel(candidate);
+        if (text) return text;
+      }}
+      for (const candidate of Object.values(value)) {{
+        const text = normalizeTargetLabel(candidate);
+        if (text) return text;
+      }}
+      return '';
+    }}
+
+    function normalizeTargetList(values, limit = 12) {{
+      if (!Array.isArray(values)) return [];
+      return values.map(normalizeTargetLabel).filter(Boolean).slice(0, limit);
+    }}
+
     function normalizeReportEntry(entry, fallbackId) {{
       if (!entry || typeof entry !== 'object') return null;
       const content = String(entry.content || entry.summary || '').trim();
-      const targets = Array.isArray(entry.targets)
-        ? entry.targets.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 12)
-        : [];
-      const target = String(entry.target || targets[0] || '').trim();
+      const targets = normalizeTargetList(entry.targets);
+      const target = normalizeTargetLabel(entry.target) || targets[0] || '';
       if (!content) return null;
       const date = String(entry.date || '');
       const createdAt = Number(entry.createdAt || Date.now());
@@ -6056,10 +6129,8 @@ def build_html(
       if (!entry || typeof entry !== 'object') return null;
       const kol = String(entry.kol || entry.source || '').trim();
       const content = String(entry.content || entry.summary || '').trim();
-      const targets = Array.isArray(entry.targets)
-        ? entry.targets.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 12)
-        : [];
-      const target = String(entry.target || targets[0] || '').trim();
+      const targets = normalizeTargetList(entry.targets);
+      const target = normalizeTargetLabel(entry.target) || targets[0] || '';
       if (!kol || !content) return null;
       const date = String(entry.date || '');
       const createdAt = Number(entry.createdAt || Date.now());

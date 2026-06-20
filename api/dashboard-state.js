@@ -48,6 +48,40 @@ function sanitizeStrongJoinStatus(payload) {
   return out;
 }
 
+function normalizeTargetLabel(value) {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") {
+    const text = String(value).trim();
+    return text === "[object Object]" ? "" : text;
+  }
+  if (typeof value !== "object") return "";
+  const candidates = [
+    value.name,
+    value.stockName,
+    value.shortName,
+    value.company,
+    value.target,
+    value.label,
+    value.title,
+    value.code,
+    value.symbol,
+  ];
+  for (const candidate of candidates) {
+    const text = normalizeTargetLabel(candidate);
+    if (text) return text;
+  }
+  for (const candidate of Object.values(value)) {
+    const text = normalizeTargetLabel(candidate);
+    if (text) return text;
+  }
+  return "";
+}
+
+function normalizeTargetList(values, limit) {
+  if (!Array.isArray(values)) return [];
+  return values.map(normalizeTargetLabel).filter(Boolean).slice(0, limit);
+}
+
 function sanitizeReports(payload) {
   if (!Array.isArray(payload)) return [];
   return payload
@@ -55,10 +89,8 @@ function sanitizeReports(payload) {
       if (!item || typeof item !== "object") return null;
       const content = String(item.content || item.summary || "").trim();
       if (!content) return null;
-      const targets = Array.isArray(item.targets)
-        ? item.targets.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 12)
-        : [];
-      const target = String(item.target || targets[0] || "").trim();
+      const targets = normalizeTargetList(item.targets, 12);
+      const target = normalizeTargetLabel(item.target) || targets[0] || "";
       const date = String(item.date || "").trim();
       const createdAt = Number(item.createdAt || Date.now());
       const id = String(item.id || `report-${index + 1}-${createdAt}`);
@@ -86,10 +118,8 @@ function sanitizeSocialPosts(payload) {
     .map((item, index) => {
       if (!item || typeof item !== "object") return null;
       const kol = String(item.kol || item.source || "").trim();
-      const targets = Array.isArray(item.targets)
-        ? item.targets.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 12)
-        : [];
-      const target = String(item.target || targets[0] || "未提及").trim();
+      const targets = normalizeTargetList(item.targets, 12);
+      const target = normalizeTargetLabel(item.target) || targets[0] || "未提及";
       const content = String(item.content || item.summary || "").trim();
       if (!kol || !content) return null;
       const date = String(item.date || "").trim();
