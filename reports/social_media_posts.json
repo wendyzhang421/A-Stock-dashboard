@@ -95,5 +95,28 @@
     "risks": [],
     "date": "2026-06-21",
     "createdAt": 1782038276469
+  },
+  {
+    "id": "social-1782041043143",
+    "kol": "Jukan",
+    "platform": "X",
+    "target": "Nvidia",
+    "targets": [
+      "Nvidia",
+      "NAND"
+    ],
+    "industry": "半导体",
+    "content": "推文推荐一篇文章，指出Nvidia CMX机架有望大幅拉动NAND需求。",
+    "summary": "推文推荐一篇文章，指出Nvidia CMX机架有望大幅拉动NAND需求。",
+    "rawText": "This is a great piece explaining why Nvidia’s CMX rack could drive massive NAND demand. I highly recommend giving it a read.https://t.co/PbmPcmFYjY\n&mdash; Jukan (@jukan05) June 21, 2026",
+    "translatedText": "这是一篇很好的文章，解释了为什么Nvidia的CMX机架可能会推动巨大的NAND需求。我强烈推荐阅读。https://t.co/PbmPcmFYjY",
+    "sourceUrl": "https://x.com/jukan05/status/2068595103233671513",
+    "tweetUrl": "https://x.com/jukan05/status/2068595103233671513",
+    "stance": "",
+    "tags": [],
+    "catalysts": [],
+    "risks": [],
+    "date": "2026-06-21",
+    "createdAt": 1782041043143
   }
 ]
