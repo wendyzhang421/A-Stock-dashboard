@@ -45,5 +45,30 @@
     "risks": [],
     "date": "2026-06-19",
     "createdAt": 1781951173878
+  },
+  {
+    "id": "social-1782034362503",
+    "kol": "Serenity",
+    "platform": "X",
+    "target": "OE Solutions (138080)",
+    "targets": [
+      "OE Solutions (138080)",
+      "AAOI",
+      "COHR",
+      "LITE"
+    ],
+    "industry": "光模块",
+    "content": "分享对韩国光收发器公司OE Solutions (138080)的研究，认为其类似于AAOI，并已成为全球少数EML玩家之一。",
+    "summary": "分享对韩国光收发器公司OE Solutions (138080)的研究，认为其类似于AAOI，并已成为全球少数EML玩家之一。",
+    "rawText": "I've been getting a lot of questions about OE Solutions (138080) recently.\n\nHere's my research/thoughts so far on it:\n\nThey're a small Korean optical transceiver company, similar to $AAOI.\n\nAnd they've become one the few EML players in the world (eg. $COHR, $LITE, Mitsubishi,… https://t.co/x8Dx7LUNlk pic.twitter.com/biBznaQdxY\n&mdash; Serenity (@aleabitoreddit) June 21, 2026",
+    "translatedText": "最近我收到了很多关于OE Solutions (138080)的问题。以下是我目前对它的研究/想法：他们是一家小型韩国光收发器公司，类似于$AAOI。而且他们已成为全球少数EML玩家之一（例如$COHR、$LITE、三菱……",
+    "sourceUrl": "https://x.com/aleabitoreddit/status/2068603148311404902",
+    "tweetUrl": "https://x.com/aleabitoreddit/status/2068603148311404902",
+    "stance": "",
+    "tags": [],
+    "catalysts": [],
+    "risks": [],
+    "date": "2026-06-21",
+    "createdAt": 1782034362503
   }
 ]
