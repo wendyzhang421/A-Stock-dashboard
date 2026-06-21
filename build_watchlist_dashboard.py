@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import html
 import io
 import json
 import os
@@ -333,6 +334,9 @@ INSTITUTION_FUND_CODES = [
     "159995",
     "515790",
 ]
+TOP_YTD_FUND_LIMIT = 100
+TOP_YTD_FUND_TYPES = ("gp", "hh")
+TOP_YTD_FUND_EXCLUDE_KEYWORDS = ("ETF", "联接", "指数")
 MAINLINE_KEYWORDS = (
     "CPO",
     "光模块",
@@ -1690,7 +1694,24 @@ def update_row_from_public_kline(row: dict, as_of: date) -> dict:
     return row
 
 
-def fetch_top5_shareholders(code: str) -> dict[str, str | float | list[str]]:
+def is_personal_holder(row: dict) -> bool:
+    holder_type = str(row.get("HOLDER_NEWTYPE") or row.get("HOLDER_NATURE") or row.get("HOLDER_TYPE_ORG") or "").strip()
+    return holder_type == "个人"
+
+
+def empty_top_holders_payload() -> dict[str, object]:
+    return {
+        "reportDate": "",
+        "totalRatio": None,
+        "nonPersonRatio": None,
+        "personalRatio": None,
+        "holderCount": 0,
+        "nonPersonCount": 0,
+        "holders": [],
+    }
+
+
+def fetch_top5_shareholders(code: str) -> dict[str, object]:
     try:
         base = "https://datacenter-web.eastmoney.com/api/data/v1/get"
         date_payload = fetch_json(
@@ -1721,7 +1742,7 @@ def fetch_top5_shareholders(code: str) -> dict[str, str | float | list[str]]:
                 "columns": "ALL",
                 "sortColumns": "RANK",
                 "sortTypes": "1",
-                "pageSize": "5",
+                "pageSize": "10",
                 "pageNumber": "1",
                 "source": "WEB",
                 "client": "WEB",
@@ -1732,8 +1753,11 @@ def fetch_top5_shareholders(code: str) -> dict[str, str | float | list[str]]:
         rows = (holder_payload.get("result") or {}).get("data") or []
         holders: list[str] = []
         total_ratio = 0.0
+        non_person_ratio = 0.0
+        personal_ratio = 0.0
+        non_person_count = 0
         has_ratio = False
-        for idx, row in enumerate(rows[:5], start=1):
+        for idx, row in enumerate(rows[:10], start=1):
             name = str(row.get("HOLDER_NAME") or "").strip()
             ratio = row.get("HOLD_RATIO")
             if not name:
@@ -1743,6 +1767,11 @@ def fetch_top5_shareholders(code: str) -> dict[str, str | float | list[str]]:
                 try:
                     ratio_value = float(ratio)
                     total_ratio += ratio_value
+                    if is_personal_holder(row):
+                        personal_ratio += ratio_value
+                    else:
+                        non_person_ratio += ratio_value
+                        non_person_count += 1
                     has_ratio = True
                     ratio_text = f" ({ratio_value:.2f}%)"
                 except Exception:
@@ -1751,10 +1780,28 @@ def fetch_top5_shareholders(code: str) -> dict[str, str | float | list[str]]:
         return {
             "reportDate": report_date,
             "totalRatio": round(total_ratio, 2) if has_ratio else None,
+            "nonPersonRatio": round(non_person_ratio, 2) if has_ratio else None,
+            "personalRatio": round(personal_ratio, 2) if has_ratio else None,
+            "holderCount": len(holders),
+            "nonPersonCount": non_person_count,
             "holders": holders,
         }
     except Exception:
-        return {"reportDate": "", "totalRatio": None, "holders": []}
+        return empty_top_holders_payload()
+
+
+def ensure_top_holder_metrics(item: dict) -> None:
+    holder_payload = item.get("topHolders") or empty_top_holders_payload()
+    if holder_payload.get("nonPersonRatio") is None and item.get("code"):
+        refreshed = fetch_top5_shareholders(str(item["code"]))
+        if refreshed.get("holders"):
+            item["topHolders"] = refreshed
+            return
+    holder_payload.setdefault("nonPersonRatio", None)
+    holder_payload.setdefault("personalRatio", None)
+    holder_payload.setdefault("holderCount", len(holder_payload.get("holders") or []))
+    holder_payload.setdefault("nonPersonCount", None)
+    item["topHolders"] = holder_payload
 
 
 def fetch_top3_business_segments(code: str) -> dict[str, str | list[dict[str, float | str | None]]]:
@@ -3063,6 +3110,167 @@ def parse_pct_text(value: object) -> float | None:
         return None
 
 
+def parse_number_text(value: object) -> float | None:
+    if value in (None, "", "-"):
+        return None
+    text = re.sub(r"<[^>]+>", "", str(value))
+    text = html.unescape(text).strip().replace(",", "").rstrip("%")
+    if not text or text == "-":
+        return None
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+
+def strip_html_tags(value: object) -> str:
+    text = re.sub(r"<br\s*/?>", "\n", str(value or ""), flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    return html.unescape(text).strip()
+
+
+def normalize_fund_family_name(name: str) -> str:
+    cleaned = re.sub(r"\s+", "", name or "")
+    cleaned = re.sub(r"(?:人民币)?(?:A|B|C|D|E|I|Y)$", "", cleaned, flags=re.I)
+    return cleaned
+
+
+def parse_rankhandler_payload(text: str) -> list[list[str]]:
+    match = re.search(r"datas\s*:\s*\[(.*?)\]\s*,\s*allRecords", text, flags=re.S)
+    if not match:
+        return []
+    raw_items = re.findall(r'"([^"]*)"', match.group(1), flags=re.S)
+    return [item.split(",") for item in raw_items]
+
+
+def fetch_fund_top_holding_details(session: requests.Session, code: str) -> tuple[list[dict[str, object]], str]:
+    try:
+        resp = request_with_fallback(
+            "GET",
+            "https://fundf10.eastmoney.com/FundArchivesDatas.aspx",
+            session=session,
+            params={
+                "type": "jjcc",
+                "code": code,
+                "topline": "10",
+                "year": "",
+                "month": "",
+                "rt": str(int(time.time() * 1000)),
+            },
+            headers={"User-Agent": NEWS_UA, "Referer": f"https://fundf10.eastmoney.com/ccmx_{code}.html"},
+            timeout=20,
+        )
+    except Exception:
+        return [], ""
+
+    content_match = re.search(r'content:"(.*?)",arryear', resp.text, flags=re.S)
+    if not content_match:
+        return [], ""
+    content = html.unescape(content_match.group(1).replace(r"\/", "/").replace(r"\"", '"'))
+    report_match = re.search(r"截止至：<font[^>]*>([^<]+)</font>", content, flags=re.S)
+    report_date = strip_html_tags(report_match.group(1)) if report_match else ""
+    holdings: list[dict[str, object]] = []
+    for row_html in re.findall(r"<tr>(.*?)</tr>", content, flags=re.S):
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", row_html, flags=re.S)
+        if len(cells) < 9:
+            continue
+        symbol_match = re.search(r"unify/r/(\d+)\.([0-9A-Za-z]+)", cells[1])
+        if symbol_match:
+            symbol = f"{symbol_match.group(1)}.{symbol_match.group(2)}"
+            formatted_code = format_fund_holding_code(symbol)
+        else:
+            formatted_code = strip_html_tags(cells[1])
+        name = strip_html_tags(cells[2])
+        if not formatted_code or not name:
+            continue
+        holdings.append(
+            {
+                "rank": int(parse_number_text(cells[0]) or len(holdings) + 1),
+                "name": name,
+                "code": formatted_code,
+                "weight": parse_pct_text(strip_html_tags(cells[6])),
+                "sharesWan": parse_number_text(cells[7]),
+                "marketValueWan": parse_number_text(cells[8]),
+                "reportDate": report_date,
+            }
+        )
+        if len(holdings) >= 10:
+            break
+    return holdings, report_date
+
+
+def fetch_top_ytd_funds(session: requests.Session, limit: int = TOP_YTD_FUND_LIMIT) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    for fund_type in TOP_YTD_FUND_TYPES:
+        params = {
+            "op": "ph",
+            "dt": "kf",
+            "ft": fund_type,
+            "rs": "",
+            "gs": "0",
+            "sc": "jnzf",
+            "st": "desc",
+            "sd": f"{AS_OF.year - 1}-12-31",
+            "ed": AS_OF.isoformat(),
+            "qdii": "",
+            "tabSubtype": ",,,,,",
+            "pi": "1",
+            "pn": "260",
+            "dx": "1",
+            "v": str(int(time.time() * 1000)),
+        }
+        try:
+            resp = request_with_fallback(
+                "GET",
+                "https://fund.eastmoney.com/data/rankhandler.aspx",
+                session=session,
+                params=params,
+                headers={"User-Agent": NEWS_UA, "Referer": "https://fund.eastmoney.com/data/fundranking.html"},
+                timeout=20,
+            )
+        except Exception:
+            continue
+        for parts in parse_rankhandler_payload(resp.text):
+            if len(parts) < 19:
+                continue
+            code = parts[0].strip()
+            name = parts[1].strip()
+            if not code or not name:
+                continue
+            if any(keyword.lower() in name.lower() for keyword in TOP_YTD_FUND_EXCLUDE_KEYWORDS):
+                continue
+            ytd_return = parse_pct_text(parts[18]) or parse_pct_text(parts[14])
+            if ytd_return is None:
+                continue
+            candidates.append(
+                {
+                    "fundCode": code,
+                    "fundName": name,
+                    "fundType": fund_type,
+                    "navDate": parts[3].strip() if len(parts) > 3 else "",
+                    "recent1mReturn": parse_pct_text(parts[8] if len(parts) > 8 else None),
+                    "recent3mReturn": parse_pct_text(parts[9] if len(parts) > 9 else None),
+                    "recent6mReturn": parse_pct_text(parts[10] if len(parts) > 10 else None),
+                    "recent1yReturn": parse_pct_text(parts[11] if len(parts) > 11 else None),
+                    "ytdReturn": ytd_return,
+                    "fundScaleYi": parse_pct_text(parts[24] if len(parts) > 24 else None),
+                }
+            )
+
+    candidates.sort(key=lambda item: float(item.get("ytdReturn") or -9999), reverse=True)
+    selected: list[dict[str, object]] = []
+    seen_families: set[str] = set()
+    for item in candidates:
+        family = normalize_fund_family_name(str(item["fundName"]))
+        if family in seen_families:
+            continue
+        selected.append({**item, "rank": len(selected) + 1})
+        seen_families.add(family)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 def fetch_stock_name_map(symbols: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     if not symbols:
@@ -3071,7 +3279,10 @@ def fetch_stock_name_map(symbols: list[str]) -> dict[str, str]:
     symbol_backmap: dict[str, str] = {}
     for symbol in symbols:
         market, raw = symbol.split(".")
-        qq_symbol = ("sh" if market == "1" else "sz") + raw
+        qq_prefix = {"1": "sh", "0": "sz", "116": "hk"}.get(market)
+        if not qq_prefix:
+            continue
+        qq_symbol = qq_prefix + raw
         qq_symbols.append(qq_symbol)
         symbol_backmap[qq_symbol] = symbol
     session = build_session()
@@ -3096,6 +3307,211 @@ def fetch_stock_name_map(symbols: list[str]) -> dict[str, str]:
         except Exception:
             continue
     return out
+
+
+def format_fund_holding_code(symbol: str) -> str:
+    market, raw = symbol.split(".")
+    suffix = {"1": ".SH", "0": ".SZ", "116": ".HK"}.get(market, "")
+    return raw + suffix
+
+
+def stock_code_to_qq_symbol(code: str) -> str | None:
+    raw = str(code or "").strip()
+    if not raw:
+        return None
+    if raw.endswith(".SH"):
+        return "sh" + raw.split(".")[0]
+    if raw.endswith(".SZ"):
+        return "sz" + raw.split(".")[0]
+    if raw.endswith(".HK"):
+        return "hk" + raw.split(".")[0].zfill(5)
+    return None
+
+
+def fetch_stock_market_cap_yi_map(codes: list[str]) -> dict[str, dict[str, float]]:
+    qq_symbols = []
+    symbol_to_code: dict[str, str] = {}
+    for code in codes:
+        symbol = stock_code_to_qq_symbol(code)
+        if not symbol:
+            continue
+        qq_symbols.append(symbol)
+        symbol_to_code[symbol] = code
+    out: dict[str, dict[str, float]] = {}
+    session = build_session()
+    for batch in batched(qq_symbols, 60):
+        try:
+            resp = request_with_fallback(
+                "GET",
+                "https://qt.gtimg.cn/q=" + ",".join(batch),
+                session=session,
+                timeout=20,
+            )
+            text = resp.content.decode("gbk", errors="ignore")
+        except Exception:
+            continue
+        for line in text.split(";"):
+            line = line.strip()
+            if not line.startswith("v_") or "=" not in line:
+                continue
+            left, right = line.split("=", 1)
+            qq_symbol = left.removeprefix("v_")
+            code = symbol_to_code.get(qq_symbol)
+            if not code:
+                continue
+            payload = right.strip().strip('"')
+            parts = payload.split("~")
+            if len(parts) < 46:
+                continue
+            total_yi = to_float(parts[44])
+            float_yi = to_float(parts[45])
+            if total_yi is None and float_yi is None:
+                continue
+            out[code] = {
+                "totalMarketCapYi": total_yi or 0.0,
+                "floatMarketCapYi": float_yi or 0.0,
+            }
+    return out
+
+
+def parse_fund_nav_trend(text: str, limit: int = 40) -> list[dict[str, object]]:
+    raw = extract_js_var_text(text, "Data_netWorthTrend") or "[]"
+    try:
+        items = json.loads(raw)
+    except Exception:
+        return []
+    trend: list[dict[str, object]] = []
+    for item in items[-limit:]:
+        if not isinstance(item, dict):
+            continue
+        nav = to_float(item.get("y"))
+        timestamp = to_float(item.get("x"))
+        if nav is None or timestamp is None:
+            continue
+        try:
+            nav_date = datetime.fromtimestamp(timestamp / 1000, timezone(timedelta(hours=8))).date().isoformat()
+        except Exception:
+            nav_date = ""
+        trend.append(
+            {
+                "date": nav_date,
+                "nav": nav,
+                "dailyReturn": to_float(item.get("equityReturn")),
+            }
+        )
+    return trend
+
+
+def enrich_and_sort_fund_holdings(holdings: list[dict[str, object]], fund_scale_yi: object) -> list[dict[str, object]]:
+    scale = to_float(fund_scale_yi)
+    enriched: list[dict[str, object]] = []
+    for holding in holdings:
+        item = dict(holding)
+        weight = to_float(item.get("weight"))
+        if scale is not None and weight is not None:
+            item["estimatedPositionYi"] = scale * weight / 100.0
+        enriched.append(item)
+    enriched.sort(
+        key=lambda item: (
+            float(item.get("estimatedPositionYi") or -1),
+            float(item.get("weight") or -1),
+        ),
+        reverse=True,
+    )
+    return enriched
+
+
+def aggregate_fund_stock_exposures(fund_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    for fund in fund_rows:
+        fund_name = str(fund.get("fundName") or "").strip()
+        fund_code = str(fund.get("fundCode") or "").strip()
+        fund_rank = fund.get("rank")
+        fund_scale = to_float(fund.get("fundScaleYi"))
+        for holding in fund.get("topHoldings") or []:
+            if not isinstance(holding, dict):
+                continue
+            code = str(holding.get("code") or "").strip()
+            name = str(holding.get("name") or "").strip()
+            if not code and not name:
+                continue
+            key = code or name
+            bucket = grouped.setdefault(
+                key,
+                {
+                    "name": name or code,
+                    "code": code,
+                    "estimatedPositionYi": 0.0,
+                    "fundCount": 0,
+                    "maxWeight": None,
+                    "maxEstimatedPositionYi": None,
+                    "holdingReportDates": set(),
+                    "funds": [],
+                },
+            )
+            estimated = to_float(holding.get("estimatedPositionYi"))
+            weight = to_float(holding.get("weight"))
+            if estimated is None and fund_scale is not None and weight is not None:
+                estimated = fund_scale * weight / 100.0
+            if estimated is None:
+                estimated = 0.0
+            bucket["estimatedPositionYi"] = float(bucket["estimatedPositionYi"]) + estimated
+            bucket["fundCount"] = int(bucket["fundCount"]) + 1
+            if weight is not None and (bucket["maxWeight"] is None or weight > float(bucket["maxWeight"])):
+                bucket["maxWeight"] = weight
+            if bucket["maxEstimatedPositionYi"] is None or estimated > float(bucket["maxEstimatedPositionYi"]):
+                bucket["maxEstimatedPositionYi"] = estimated
+            if holding.get("reportDate"):
+                cast_dates = bucket["holdingReportDates"]
+                if isinstance(cast_dates, set):
+                    cast_dates.add(str(holding.get("reportDate")))
+            bucket_funds = bucket["funds"]
+            if isinstance(bucket_funds, list):
+                bucket_funds.append(
+                    {
+                        "fundName": fund_name,
+                        "fundCode": fund_code,
+                        "fundRank": fund_rank,
+                        "weight": weight,
+                        "estimatedPositionYi": estimated,
+                    }
+                )
+
+    market_caps = fetch_stock_market_cap_yi_map(
+        [str(item.get("code") or "") for item in grouped.values() if item.get("code")]
+    )
+    rows: list[dict[str, object]] = []
+    for item in grouped.values():
+        funds = item.get("funds") if isinstance(item.get("funds"), list) else []
+        funds.sort(key=lambda fund: float(fund.get("estimatedPositionYi") or 0.0), reverse=True)
+        report_dates = item.get("holdingReportDates")
+        code = str(item.get("code") or "")
+        cap_info = market_caps.get(code) or {}
+        total_market_cap_yi = to_float(cap_info.get("totalMarketCapYi"))
+        float_market_cap_yi = to_float(cap_info.get("floatMarketCapYi"))
+        estimated_position_yi = float(item.get("estimatedPositionYi") or 0.0)
+        exposure_ratio_pct = None
+        if total_market_cap_yi not in (None, 0):
+            exposure_ratio_pct = estimated_position_yi / float(total_market_cap_yi) * 100.0
+        rows.append(
+            {
+                "name": item.get("name"),
+                "code": code,
+                "estimatedPositionYi": round(estimated_position_yi, 6),
+                "totalMarketCapYi": total_market_cap_yi,
+                "floatMarketCapYi": float_market_cap_yi,
+                "exposureRatioPct": exposure_ratio_pct,
+                "fundCount": item.get("fundCount"),
+                "maxWeight": item.get("maxWeight"),
+                "maxEstimatedPositionYi": item.get("maxEstimatedPositionYi"),
+                "holdingReportDates": sorted(report_dates) if isinstance(report_dates, set) else [],
+                "topFunds": funds[:8],
+            }
+        )
+    rows.sort(key=lambda item: float(item.get("estimatedPositionYi") or 0.0), reverse=True)
+    for idx, item in enumerate(rows, start=1):
+        item["rank"] = idx
+    return rows
 
 
 def probe_ifind_fund_quote_support(access_token: str | None) -> dict[str, object]:
@@ -3149,9 +3565,18 @@ def probe_ifind_fund_quote_support(access_token: str | None) -> dict[str, object
 
 def fetch_institution_holdings(access_token: str | None = None) -> dict[str, object]:
     session = build_session()
+    ranked_funds = fetch_top_ytd_funds(session)
+    if not ranked_funds:
+        ranked_funds = [
+            {"fundCode": code, "fundName": code, "rank": idx, "ytdReturn": None, "navDate": ""}
+            for idx, code in enumerate(INSTITUTION_FUND_CODES, start=1)
+        ]
     fund_snapshots: list[dict[str, object]] = []
     stock_symbol_set: set[str] = set()
-    for code in INSTITUTION_FUND_CODES:
+    for ranked_fund in ranked_funds:
+        code = str(ranked_fund.get("fundCode") or "").strip()
+        if not code:
+            continue
         try:
             resp = request_with_fallback(
                 "GET",
@@ -3165,6 +3590,8 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
             name = name_match.group(1).strip() if name_match else code
             stock_codes_raw = extract_js_var_text(text, "stockCodesNew") or "[]"
             stock_codes = json.loads(stock_codes_raw)
+            holding_details, holding_report_date = fetch_fund_top_holding_details(session, code)
+            nav_trend = parse_fund_nav_trend(text)
             scale_raw = extract_js_var_text(text, "Data_fluctuationScale") or "{}"
             scale_data = json.loads(scale_raw)
             categories = scale_data.get("categories") or []
@@ -3217,11 +3644,14 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
             stock_symbol_set.update(stock_codes)
             fund_snapshots.append(
                 {
+                    "rank": ranked_fund.get("rank"),
                     "fundCode": code,
                     "fundName": name,
                     "fundScaleYi": latest_scale,
                     "scaleChange": latest_mom,
                     "scaleReportDate": latest_scale_date,
+                    "ytdReturn": ranked_fund.get("ytdReturn"),
+                    "rankNavDate": ranked_fund.get("navDate"),
                     "recent1yReturn": parse_pct_text(re.search(r'var\s+syl_1n\s*=\s*"([^"]*)"', text).group(1) if re.search(r'var\s+syl_1n\s*=\s*"([^"]*)"', text) else None),
                     "recent6mReturn": parse_pct_text(re.search(r'var\s+syl_6y\s*=\s*"([^"]*)"', text).group(1) if re.search(r'var\s+syl_6y\s*=\s*"([^"]*)"', text) else None),
                     "recent3mReturn": parse_pct_text(re.search(r'var\s+syl_3y\s*=\s*"([^"]*)"', text).group(1) if re.search(r'var\s+syl_3y\s*=\s*"([^"]*)"', text) else None),
@@ -3236,6 +3666,9 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
                     "managerTenureReturn": manager_tenure_return,
                     "managerNavDate": manager_nav_date,
                     "holdingSymbols": stock_codes[:10],
+                    "holdingDetails": holding_details,
+                    "holdingReportDate": holding_report_date,
+                    "navTrend": nav_trend,
                 }
             )
         except Exception:
@@ -3244,20 +3677,28 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
     name_map = fetch_stock_name_map(sorted(stock_symbol_set))
     rows: list[dict[str, object]] = []
     for item in fund_snapshots:
-        holdings = [
-            {
-                "name": name_map.get(symbol, symbol.split(".")[1]),
-                "code": symbol.split(".")[1] + (".SH" if symbol.startswith("1.") else ".SZ"),
-            }
-            for symbol in item.get("holdingSymbols", [])
-        ]
+        holding_details = item.get("holdingDetails") or []
+        if holding_details:
+            holdings = holding_details
+        else:
+            holdings = [
+                {
+                    "name": name_map.get(symbol, symbol.split(".")[1]),
+                    "code": format_fund_holding_code(symbol),
+                }
+                for symbol in item.get("holdingSymbols", [])
+            ]
+        holdings = enrich_and_sort_fund_holdings(holdings, item.get("fundScaleYi"))
         rows.append(
             {
+                "rank": item.get("rank"),
                 "fundCode": item["fundCode"],
                 "fundName": item["fundName"],
                 "fundScaleYi": item["fundScaleYi"],
                 "scaleChange": item["scaleChange"],
                 "scaleReportDate": item["scaleReportDate"],
+                "ytdReturn": item.get("ytdReturn"),
+                "rankNavDate": item.get("rankNavDate"),
                 "recent1yReturn": item.get("recent1yReturn"),
                 "recent6mReturn": item.get("recent6mReturn"),
                 "recent3mReturn": item.get("recent3mReturn"),
@@ -3266,19 +3707,23 @@ def fetch_institution_holdings(access_token: str | None = None) -> dict[str, obj
                 "holderReportDate": item.get("holderReportDate"),
                 "stockAllocationRatio": item.get("stockAllocationRatio"),
                 "assetReportDate": item.get("assetReportDate"),
-                "managerName": item.get("managerName"),
-                "managerWorkTime": item.get("managerWorkTime"),
-                "managerFundSize": item.get("managerFundSize"),
-                "managerTenureReturn": item.get("managerTenureReturn"),
-                "managerNavDate": item.get("managerNavDate"),
+                "holdingReportDate": item.get("holdingReportDate"),
+                "navTrend": item.get("navTrend") or [],
                 "topHoldings": holdings,
             }
         )
-    rows.sort(key=lambda item: float(item.get("fundScaleYi") or 0.0), reverse=True)
+    rows.sort(key=lambda item: int(item.get("rank") or 9999))
+    stock_exposure_rows = aggregate_fund_stock_exposures(rows)
     return {
         "tradeDate": AS_OF.isoformat(),
-        "source": "天天基金 pingzhongdata / 腾讯行情名称映射",
+        "source": "天天基金基金排行 + pingzhongdata / 腾讯行情名称映射",
+        "selectionRule": (
+            f"天天基金开放式基金排行，股票型+混合型，按今年来收益排序，"
+            f"剔除名称含{'/'.join(TOP_YTD_FUND_EXCLUDE_KEYWORDS)}，按份额尾缀去重，取前{TOP_YTD_FUND_LIMIT}只；"
+            "个股实际仓位按基金规模×占净值比例粗算并在基金内降序"
+        ),
         "ifindProbe": probe_ifind_fund_quote_support(access_token),
+        "stockExposureRows": stock_exposure_rows,
         "rows": rows,
     }
 
@@ -3574,41 +4019,141 @@ def build_html(
         for item in overview_indices
     )
     institution_rows_data = institution_holdings.get("rows") or []
+    stock_exposure_rows_data = institution_holdings.get("stockExposureRows") or aggregate_fund_stock_exposures(institution_rows_data)
     institution_probe = institution_holdings.get("ifindProbe") or {}
+
+    def render_fund_mini_trend(item: dict) -> str:
+        trend = item.get("navTrend") or []
+        points = [
+            (idx, to_float(point.get("nav")))
+            for idx, point in enumerate(trend[-32:])
+            if isinstance(point, dict) and to_float(point.get("nav")) is not None
+        ]
+        if len(points) < 2:
+            return '<span class="news-time">-</span>'
+        values = [float(value) for _, value in points]
+        low = min(values)
+        high = max(values)
+        if high == low:
+            high = low + 1
+        width = 112
+        height = 38
+        left = 4
+        right = 4
+        top = 5
+        bottom = 5
+        chart_width = width - left - right
+        chart_height = height - top - bottom
+
+        def y_pos(value: float) -> float:
+            return top + (high - value) / (high - low) * chart_height
+
+        step = chart_width / max(len(points) - 1, 1)
+        coords = [
+            f"{left + step * idx:.1f},{y_pos(float(value)):.1f}"
+            for idx, (_, value) in enumerate(points)
+        ]
+        cls = "rise" if values[-1] >= values[0] else "fall"
+        return (
+            f'<svg class="fund-mini-trend {cls}" viewBox="0 0 {width} {height}" role="img" aria-label="基金净值走势">'
+            '<path class="mini-grid" d="M4 12H108M4 25H108" />'
+            f'<polyline points="{" ".join(coords)}" />'
+            "</svg>"
+        )
+
+    stock_exposure_rows_html = []
+    for idx, item in enumerate(stock_exposure_rows_data, start=1):
+        top_funds = item.get("topFunds") or []
+        fund_chips = []
+        for fund in top_funds[:5]:
+            estimate = to_float(fund.get("estimatedPositionYi"))
+            weight = to_float(fund.get("weight"))
+            suffix_parts = []
+            if estimate is not None:
+                suffix_parts.append(f"{estimate:.2f}亿")
+            if weight is not None:
+                suffix_parts.append(f"{weight:.2f}%")
+            suffix = " / ".join(suffix_parts)
+            fund_chips.append(
+                f'<span class="holding-chip exposure-fund-chip">'
+                f'#{fund.get("fundRank") or "-"} {fund.get("fundName") or "-"}'
+                f'{f" <strong>{suffix}</strong>" if suffix else ""}'
+                "</span>"
+            )
+        report_dates = item.get("holdingReportDates") or []
+        report_date_text = " / ".join(str(value) for value in report_dates[-2:]) if report_dates else "-"
+        exposure_ratio = item.get("exposureRatioPct")
+        total_market_cap_yi = item.get("totalMarketCapYi")
+        stock_exposure_rows_html.append(
+            f"""
+            <tr data-stock-exposure-row="true" data-estimated-position-yi="{float(item.get('estimatedPositionYi') or 0.0)}" data-exposure-ratio="{'' if exposure_ratio is None else float(exposure_ratio)}">
+              <td class="index-cell" data-index-cell="stock-exposure">{idx}</td>
+              <td>
+                <div class="strong-name-cell">
+                  <span class="stock-name">{item.get('name') or '-'}</span>
+                  <span class="stock-code">{item.get('code') or '-'}</span>
+                </div>
+              </td>
+              <td class="nowrap-cell">{float(item.get('estimatedPositionYi') or 0.0):,.2f}亿</td>
+              <td class="nowrap-cell">
+                {'-' if exposure_ratio is None else f"{float(exposure_ratio):.3f}%"}
+                <div class="news-time">
+                  市值 {'-' if total_market_cap_yi is None else f"{float(total_market_cap_yi):,.2f}亿"}
+                </div>
+              </td>
+              <td class="nowrap-cell">{item.get('fundCount') or 0} 只</td>
+              <td class="nowrap-cell">
+                {'-' if item.get('maxWeight') is None else f"{float(item.get('maxWeight')):.2f}%"}
+                <div class="news-time">
+                  最大单基 {'-' if item.get('maxEstimatedPositionYi') is None else f"{float(item.get('maxEstimatedPositionYi')):.2f}亿"}
+                </div>
+              </td>
+              <td>
+                <div class="holding-chip-list">{''.join(fund_chips) or '<span class="holding-chip empty">暂无</span>'}</div>
+                <div class="news-time">持仓披露期 {report_date_text}</div>
+              </td>
+            </tr>
+            """
+        )
+
     institution_rows_html = []
     for idx, item in enumerate(institution_rows_data, start=1):
         holdings = item.get("topHoldings") or []
-        holdings_html = "".join(
-            f'<span class="holding-chip" data-code="{holding.get("code") or ""}">{holding.get("name") or "-"} <small>{holding.get("code") or ""}</small></span>'
-            for holding in holdings
-        )
+        holding_chip_parts = []
+        for holding in holdings:
+            holding_weight = holding.get("weight")
+            estimated_position = holding.get("estimatedPositionYi")
+            weight_html = ""
+            if holding_weight is not None:
+                weight_html = f' <em>{float(holding_weight):.2f}%</em>'
+            position_html = ""
+            if estimated_position is not None:
+                position_html = f' <strong>{float(estimated_position):.2f}亿</strong>'
+            holding_chip_parts.append(
+                f'<span class="holding-chip" data-code="{holding.get("code") or ""}">'
+                f'{holding.get("name") or "-"}{weight_html}{position_html} <small>{holding.get("code") or ""}</small>'
+                "</span>"
+            )
+        holdings_html = "".join(holding_chip_parts)
         perf_parts = []
         for label, value in (
+            ("今年来", item.get("ytdReturn")),
             ("近1年", item.get("recent1yReturn")),
             ("近6月", item.get("recent6mReturn")),
             ("近3月", item.get("recent3mReturn")),
             ("近1月", item.get("recent1mReturn")),
         ):
             perf_parts.append(f"{label} {'-' if value is None else format_pct(float(value))}")
-        manager_lines = []
-        if item.get("managerName"):
-            manager_lines.append(str(item.get("managerName")))
-        if item.get("managerWorkTime"):
-            manager_lines.append(str(item.get("managerWorkTime")))
-        if item.get("managerFundSize"):
-            manager_lines.append(f"在管 {item.get('managerFundSize')}")
-        tenure_return = item.get("managerTenureReturn")
-        if tenure_return is not None:
-            manager_lines.append(f"任期收益 {format_pct(float(tenure_return))}")
         holder_ratio = item.get("institutionHolderRatio")
         stock_ratio = item.get("stockAllocationRatio")
+        holding_report_date = item.get("holdingReportDate") or item.get("assetReportDate") or "-"
+        fund_rank = item.get("rank") or idx
         institution_rows_html.append(
             f"""
             <tr data-institution-row="true">
-              <td class="index-cell">{idx}</td>
               <td>
                 <div class="strong-name-cell">
-                  <span class="stock-name">{item.get('fundName') or '-'}</span>
+                  <span class="stock-name">#{fund_rank} {item.get('fundName') or '-'}</span>
                   <span class="stock-code">{item.get('fundCode') or '-'}</span>
                 </div>
               </td>
@@ -3620,8 +4165,14 @@ def build_html(
               <td class="nowrap-cell">
                 {'<br />'.join(perf_parts)}
               </td>
+              <td class="fund-trend-cell">
+                {render_fund_mini_trend(item)}
+              </td>
               <td>
-                <div>{'<br />'.join(manager_lines) or '-'}</div>
+                <div class="holding-chip-list">{holdings_html or '<span class="holding-chip empty">暂无</span>'}</div>
+                <div class="news-time">按 基金规模 × 个股占净值比例 粗算，降序</div>
+              </td>
+              <td>
                 <div class="news-time">
                   {'机构持有占比 -' if holder_ratio is None else f"机构持有占比 {float(holder_ratio):.2f}%"}
                   ·
@@ -3630,9 +4181,7 @@ def build_html(
                 <div class="news-time">
                   持有人披露期 {item.get('holderReportDate') or '-'} · 资产配置披露期 {item.get('assetReportDate') or '-'}
                 </div>
-              </td>
-              <td>
-                <div class="holding-chip-list">{holdings_html or '<span class="holding-chip empty">暂无</span>'}</div>
+                <div class="news-time">持仓披露期 {holding_report_date}</div>
               </td>
             </tr>
             """
@@ -3894,21 +4443,43 @@ def build_html(
       backdrop-filter: blur(10px);
       overflow: hidden;
     }}
+    .sidebar-brand {{
+      display: grid;
+      gap: 3px;
+      align-items: center;
+      min-height: 36px;
+      padding: 2px 2px 0;
+    }}
+    .brand-copy {{
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }}
     .sidebar-brand strong {{
       display: block;
-      font-size: 14px;
-      letter-spacing: 0.12em;
+      font-size: 15px;
+      letter-spacing: 0;
       color: #f0fffd;
-      text-transform: uppercase;
-      line-height: 1.35;
+      line-height: 1.1;
+      font-weight: 900;
       text-shadow: none;
+      white-space: nowrap;
+    }}
+    .sidebar-brand span {{
+      display: block;
+      color: #84d9ff;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      line-height: 1.2;
+      text-transform: uppercase;
     }}
     body[data-theme="light"] .sidebar-brand strong {{
       color: #0d2028;
       text-shadow: none;
     }}
-    .sidebar-brand span {{
-      display: none;
+    body[data-theme="light"] .sidebar-brand span {{
+      color: #007f8c;
     }}
     body[data-theme="light"] .sidebar {{
       background: linear-gradient(180deg, rgba(250,252,253,0.98), rgba(241,246,249,0.98));
@@ -4409,6 +4980,10 @@ def build_html(
       padding: 6px 10px 10px;
       overflow-x: auto;
     }}
+    .summary-table-wrap.compact-table-wrap {{
+      margin-top: 4px;
+      padding-top: 4px;
+    }}
     .summary-table tbody tr[data-cap-group="mega"] td {{
       background: rgba(31, 41, 55, 0.130);
     }}
@@ -4513,6 +5088,18 @@ def build_html(
       font-size: 11px;
       color: var(--muted);
     }}
+    .section-head.compact-section-head {{
+      margin: 9px 2px 4px;
+      min-height: 26px;
+    }}
+    .section-head.compact-section-head h2 {{
+      font-size: 15px;
+      line-height: 1;
+    }}
+    .section-head.compact-section-head .pill {{
+      padding: 4px 8px;
+      font-size: 10px;
+    }}
     .summary-table {{
       width: 100%;
       border-collapse: collapse;
@@ -4597,19 +5184,52 @@ def build_html(
       gap: 4px;
       border-radius: 999px;
       padding: 5px 9px;
-      background: rgba(83,242,229,0.08);
-      color: #d8f7f4;
+      background: rgba(30,41,59,0.82);
+      color: #e5edf7;
       font-size: 11px;
       line-height: 1.2;
       white-space: nowrap;
-      border: 1px solid rgba(83,242,229,0.10);
+      border: 1px solid rgba(148,163,184,0.26);
     }}
     .holding-chip small {{
-      color: var(--muted);
+      color: #9ca8b8;
       font-size: 10px;
+    }}
+    .holding-chip em {{
+      color: #f3c969;
+      font-style: normal;
+      font-weight: 700;
+    }}
+    .holding-chip strong {{
+      color: #9ec5ff;
+      font-weight: 700;
     }}
     .holding-chip.empty {{
       color: var(--muted);
+    }}
+    .fund-trend-cell {{
+      min-width: 124px;
+    }}
+    .fund-mini-trend {{
+      width: 112px;
+      height: 38px;
+      display: block;
+    }}
+    .fund-mini-trend polyline {{
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }}
+    .fund-mini-trend.rise polyline {{
+      stroke: #ef8b72;
+    }}
+    .fund-mini-trend.fall polyline {{
+      stroke: #7fc7a4;
+    }}
+    .fund-mini-trend .mini-grid {{
+      stroke: rgba(148,163,184,0.14);
+      stroke-width: 1;
     }}
     .institution-note {{
       margin-top: 12px;
@@ -5086,7 +5706,7 @@ def build_html(
       padding: 24px;
       background: rgba(18, 24, 30, 0.42);
       backdrop-filter: blur(6px);
-      z-index: 30;
+      z-index: 80;
     }}
     .modal.open {{
       display: flex;
@@ -5476,7 +6096,10 @@ def build_html(
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <strong>Stock Killer-A Shares</strong>
+        <div class="brand-copy">
+          <strong>Stock Killer</strong>
+          <span>A-Shares Watch</span>
+        </div>
       </div>
       <nav class="sidebar-nav">
         <button class="sidebar-link active" type="button" data-view-target="market-view">市场行情</button>
@@ -5522,13 +6145,13 @@ def build_html(
         {index_cards_html}
       </div>
     </section>
-    <div class="section-head">
+    <div class="section-head compact-section-head">
       <div>
         <h2>当日强势股</h2>
       </div>
       <span class="pill">共 {len(strong_stocks)} 只</span>
     </div>
-    <section class="summary-table-wrap">
+    <section class="summary-table-wrap compact-table-wrap">
       <table class="summary-table">
         <thead>
           {strong_head_html}
@@ -5575,13 +6198,38 @@ def build_html(
         <div class="notice-banner institution-note">
           iFinD 基金能力验证：
           {"已确认支持 .OF 基金行情历史" if institution_probe.get("supportsFundQuotes") else "当前未确认 .OF 基金行情历史"}
-          。机构页当前使用天天基金公开披露口径，可展示近1年/6月/3月/1月收益、基金规模环比、基金经理在管规模、机构持有占比和前十大重仓股。
+          。机构页当前使用天天基金公开披露口径，可展示今年来/近1年/6月/3月/1月收益、基金规模环比、机构持有占比、股票仓位和前十大重仓股占净值比例。
         </div>
       </section>
       <div class="section-head">
         <div>
-          <h2>重点基金持仓</h2>
-          <p>{institution_probe.get('notes') or '基金规模、阶段收益、管理信息和前十大重仓股按最近公开披露整理'}</p>
+          <h2>重仓股汇总</h2>
+          <p>按前100基金披露持仓汇总，同一股票估算仓位加总后降序；估算口径为基金规模 × 个股占净值比例。</p>
+        </div>
+        <span class="pill">共 {len(stock_exposure_rows_data)} 个标的</span>
+      </div>
+      <section class="summary-table-wrap">
+        <table class="summary-table institution-table stock-exposure-table">
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>个股</th>
+              <th><button class="sort-button" type="button" data-stock-exposure-sort="estimatedPositionYi" data-default-direction="desc" data-active="true"><span>合计估算仓位</span><span class="sort-indicator">↓</span></button></th>
+              <th><button class="sort-button" type="button" data-stock-exposure-sort="exposureRatio" data-default-direction="desc"><span>Ratio</span><span class="sort-indicator">↕</span></button></th>
+              <th>覆盖基金</th>
+              <th>最高单基仓位</th>
+              <th>主要来源基金</th>
+            </tr>
+          </thead>
+          <tbody id="stock-exposure-table-body">
+            {''.join(stock_exposure_rows_html)}
+          </tbody>
+        </table>
+      </section>
+      <div class="section-head">
+        <div>
+          <h2>今年收益率前100基金明细</h2>
+          <p>{institution_holdings.get('selectionRule') or institution_probe.get('notes') or '基金规模、阶段收益、仓位信息和前十大重仓股按最近公开披露整理'}</p>
         </div>
         <span class="pill">共 {len(institution_rows_data)} 只</span>
       </div>
@@ -5589,12 +6237,12 @@ def build_html(
         <table class="summary-table institution-table">
           <thead>
             <tr>
-              <th>编号</th>
-              <th>基金名称</th>
-              <th>基金体量</th>
-              <th>阶段收益</th>
-              <th>管理信息</th>
-              <th>前10大重仓股</th>
+              <th>名称</th>
+              <th>体量</th>
+              <th>收益</th>
+              <th>走势</th>
+              <th>重仓股</th>
+              <th>持有人</th>
             </tr>
           </thead>
           <tbody id="institution-table-body">
@@ -5866,7 +6514,7 @@ def build_html(
               <p id="research-users">暂无</p>
             </div>
             <div class="research-section">
-              <h4>前五大股东</h4>
+              <h4>股东结构</h4>
               <p id="research-top-holders">暂无</p>
             </div>
             <div class="research-section">
@@ -6075,6 +6723,7 @@ def build_html(
     const socialActionNote = document.getElementById('social-action-note');
     const strongStocksTableBody = document.getElementById('strong-stocks-table-body');
     const watchlistTableBody = document.getElementById('watchlist-table-body');
+    const stockExposureTableBody = document.getElementById('stock-exposure-table-body');
     const removedPanel = document.getElementById('removed-panel');
     const removedList = document.getElementById('removed-list');
     const researchRevenue = document.getElementById('research-revenue');
@@ -6464,7 +7113,9 @@ def build_html(
       const holderLines = topHolders.holders || [];
       const topHolderPrefix = [];
       if (topHolders.reportDate) topHolderPrefix.push('报告期：' + topHolders.reportDate);
-      if (topHolders.totalRatio != null) topHolderPrefix.push('前五大合计：' + Number(topHolders.totalRatio).toFixed(2) + '%');
+      if (topHolders.nonPersonRatio != null) topHolderPrefix.push('前十大非个人：' + Number(topHolders.nonPersonRatio).toFixed(2) + '%');
+      if (topHolders.totalRatio != null) topHolderPrefix.push('前十大合计：' + Number(topHolders.totalRatio).toFixed(2) + '%');
+      if (topHolders.personalRatio != null && Number(topHolders.personalRatio) > 0) topHolderPrefix.push('其中个人：' + Number(topHolders.personalRatio).toFixed(2) + '%');
       researchTopHolders.textContent = holderLines.length
         ? (topHolderPrefix.length ? topHolderPrefix.join('\\n') + '\\n' : '') + holderLines.join('\\n')
         : '暂无';
@@ -6953,6 +7604,7 @@ def build_html(
     }}
 
     const watchlistSortState = {{ field: 'floatMarketCap', direction: 'desc' }};
+    const stockExposureSortState = {{ field: 'estimatedPositionYi', direction: 'desc' }};
     const CAP_GROUP_ORDER = ['mega', 'large', 'small'];
 
     function capGroupKeyFromValue(value) {{
@@ -7033,6 +7685,32 @@ def build_html(
       renumberTableRows();
     }}
 
+    function updateStockExposureSortIndicators() {{
+      document.querySelectorAll('[data-stock-exposure-sort]').forEach(button => {{
+        const active = button.dataset.stockExposureSort === stockExposureSortState.field;
+        button.dataset.active = active ? 'true' : 'false';
+        const indicator = button.querySelector('.sort-indicator');
+        if (indicator) {{
+          indicator.textContent = active ? (stockExposureSortState.direction === 'asc' ? '↑' : '↓') : '↕';
+        }}
+      }});
+    }}
+
+    function applyStockExposureSort() {{
+      if (!stockExposureTableBody) return;
+      const rows = [...stockExposureTableBody.querySelectorAll('tr[data-stock-exposure-row="true"]')];
+      rows.sort((a, b) => {{
+        const left = parseRowNumber(a, stockExposureSortState.field);
+        const right = parseRowNumber(b, stockExposureSortState.field);
+        const primary = compareNullableNumbers(left, right, stockExposureSortState.direction);
+        if (primary !== 0) return primary;
+        return Number(b.dataset.estimatedPositionYi || 0) - Number(a.dataset.estimatedPositionYi || 0);
+      }});
+      rows.forEach(row => stockExposureTableBody.appendChild(row));
+      updateStockExposureSortIndicators();
+      renumberTableRows();
+    }}
+
     function renumberTableRows() {{
       let strongIndex = 1;
       strongStocksTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(row => {{
@@ -7046,6 +7724,14 @@ def build_html(
         const cell = row.querySelector('[data-index-cell="watchlist"]');
         if (cell) cell.textContent = String(watchIndex++);
       }});
+      if (stockExposureTableBody) {{
+        let exposureIndex = 1;
+        stockExposureTableBody.querySelectorAll('tr[data-stock-exposure-row="true"]').forEach(row => {{
+          if (row.style.display === 'none') return;
+          const cell = row.querySelector('[data-index-cell="stock-exposure"]');
+          if (cell) cell.textContent = String(exposureIndex++);
+        }});
+      }}
     }}
 
     function createSyntheticWatchlistRow(item) {{
@@ -7454,6 +8140,20 @@ def build_html(
       }});
     }});
 
+    document.querySelectorAll('[data-stock-exposure-sort]').forEach(button => {{
+      button.addEventListener('click', () => {{
+        const field = button.dataset.stockExposureSort;
+        const defaultDirection = button.dataset.defaultDirection || 'desc';
+        if (stockExposureSortState.field === field) {{
+          stockExposureSortState.direction = stockExposureSortState.direction === 'desc' ? 'asc' : 'desc';
+        }} else {{
+          stockExposureSortState.field = field;
+          stockExposureSortState.direction = defaultDirection;
+        }}
+        applyStockExposureSort();
+      }});
+    }});
+
     stockSearch.addEventListener('input', () => {{
       const keyword = stockSearch.value.trim().toLowerCase();
       document.querySelectorAll('.summary-table tbody tr').forEach(row => {{
@@ -7715,6 +8415,7 @@ def build_html(
     syncStrongStockStatusControls();
     updateWatchlistSortIndicators();
     applyWatchlistSort();
+    applyStockExposureSort();
     renderReportEntries();
     renderSocialTrackers();
     renderSocialEntries();
@@ -7797,7 +8498,8 @@ def hydrate_cached_dataset(dataset: list[dict]) -> list[dict]:
             "loanBalance": None,
             "finBuyAmount": None,
         }
-        item["topHolders"] = item.get("topHolders") or {"reportDate": "", "totalRatio": None, "holders": []}
+        item["topHolders"] = item.get("topHolders") or empty_top_holders_payload()
+        ensure_top_holder_metrics(item)
         item["businessSegments"] = item.get("businessSegments") or {"reportDate": "", "category": "", "items": []}
         item["topCustomers"] = item.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
         item["latestNews"] = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
@@ -7861,7 +8563,8 @@ def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
             "loanBalance": None,
             "finBuyAmount": None,
         }
-        item["topHolders"] = item.get("topHolders") or {"reportDate": "", "totalRatio": None, "holders": []}
+        item["topHolders"] = item.get("topHolders") or empty_top_holders_payload()
+        ensure_top_holder_metrics(item)
         item["businessSegments"] = item.get("businessSegments") or {"reportDate": "", "category": "", "items": []}
         item["topCustomers"] = item.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
         item["kline"] = item.get("kline") or []
@@ -8162,6 +8865,7 @@ def main() -> int:
         all_news_targets.append((row["name"], code))
     news_map = fetch_latest_news_map(all_news_targets)
     for row in dataset:
+        ensure_top_holder_metrics(row)
         row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
         row["mainBusiness"] = resolve_main_business(
             row["code"],
@@ -8176,6 +8880,7 @@ def main() -> int:
             ),
         )
     for row in strong_stocks:
+        ensure_top_holder_metrics(row)
         row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
         row["mainBusiness"] = resolve_main_business(
             row["code"],
