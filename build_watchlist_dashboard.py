@@ -3374,6 +3374,53 @@ def fetch_stock_market_cap_yi_map(codes: list[str]) -> dict[str, dict[str, float
     return out
 
 
+def fetch_stock_quote_summary_map(codes: list[str]) -> dict[str, dict[str, float]]:
+    qq_symbols = []
+    symbol_to_code: dict[str, str] = {}
+    for code in codes:
+        symbol = stock_code_to_qq_symbol(code)
+        if not symbol:
+            continue
+        qq_symbols.append(symbol)
+        symbol_to_code[symbol] = code
+    out: dict[str, dict[str, float]] = {}
+    session = build_session()
+    for batch in batched(qq_symbols, 60):
+        try:
+            resp = request_with_fallback(
+                "GET",
+                "https://qt.gtimg.cn/q=" + ",".join(batch),
+                session=session,
+                timeout=20,
+            )
+            text = resp.content.decode("gbk", errors="ignore")
+        except Exception:
+            continue
+        for line in text.split(";"):
+            line = line.strip()
+            if not line.startswith("v_") or "=" not in line:
+                continue
+            left, right = line.split("=", 1)
+            qq_symbol = left.removeprefix("v_")
+            code = symbol_to_code.get(qq_symbol)
+            if not code:
+                continue
+            payload = right.strip().strip('"')
+            parts = payload.split("~")
+            if len(parts) < 46:
+                continue
+            out[code] = {
+                "latestClose": to_float(parts[3]) or 0.0,
+                "todayPct": to_float(parts[32]) or 0.0,
+                "todayVolume": to_float(parts[36]) or 0.0,
+                "todayAmount": (to_float(parts[37]) or 0.0) * 10000.0,
+                "turnoverRate": to_float(parts[38]) or 0.0,
+                "totalMarketCap": (to_float(parts[44]) or 0.0) * 1e8,
+                "floatMarketCap": (to_float(parts[45]) or 0.0) * 1e8,
+            }
+    return out
+
+
 def parse_fund_nav_trend(text: str, limit: int = 40) -> list[dict[str, object]]:
     raw = extract_js_var_text(text, "Data_netWorthTrend") or "[]"
     try:
@@ -3875,6 +3922,71 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
     return extras
 
 
+def load_institution_modal_extras(institution_holdings: dict[str, object], current_codes: set[str], limit: int = 160) -> list[dict]:
+    extras: list[dict] = []
+    seen = set(current_codes)
+    rows = institution_holdings.get("stockExposureRows") or []
+    if not isinstance(rows, list):
+        return extras
+    candidate_rows = [
+        item for item in rows
+        if isinstance(item, dict)
+        and str(item.get("code") or "").strip()
+        and str(item.get("name") or "").strip()
+        and str(item.get("code") or "").strip() not in seen
+    ][:limit]
+    quote_map = fetch_stock_quote_summary_map([str(item.get("code") or "") for item in candidate_rows]) if TRUST_ENV else {}
+    for item in candidate_rows:
+        code = str(item.get("code") or "").strip()
+        name = str(item.get("name") or "").strip()
+        total_market_cap = to_float(item.get("totalMarketCapYi"))
+        float_market_cap = to_float(item.get("floatMarketCapYi"))
+        seed = {
+            "code": code,
+            "name": name,
+            "mainBusiness": "基金重仓股",
+            "industry": "",
+            "research": build_research_payload(code, {}),
+            "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
+            "topHolders": {"reportDate": "", "totalRatio": None, "holders": []},
+            "businessSegments": {"reportDate": "", "category": "", "items": []},
+            "topCustomers": {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []},
+            "orderBook": {"time": "", "asks": [], "bids": []},
+            "kline": [],
+            "last5": [],
+            "latestClose": None,
+            "todayPct": None,
+            "todayVolume": 0.0,
+            "todayAmount": 0.0,
+            "turnoverRate": None,
+            "totalMarketCap": (total_market_cap or 0.0) * 1e8,
+            "floatMarketCap": (float_market_cap or 0.0) * 1e8,
+            "latestNews": {"time": "", "summary": "", "title": "", "link": "", "isRecent": False},
+        }
+        historical = load_historical_report_row(code) or {}
+        if historical:
+            seed = {
+                **seed,
+                **historical,
+                "code": code,
+                "name": historical.get("name") or name,
+                "totalMarketCap": historical.get("totalMarketCap") or seed["totalMarketCap"],
+                "floatMarketCap": historical.get("floatMarketCap") or seed["floatMarketCap"],
+            }
+        snapshot = quote_map.get(code) or {}
+        if snapshot and not seed.get("latestClose"):
+            seed["latestClose"] = snapshot.get("latestClose")
+            seed["todayPct"] = snapshot.get("todayPct")
+            seed["todayVolume"] = snapshot.get("todayVolume") or seed.get("todayVolume") or 0.0
+            seed["todayAmount"] = snapshot.get("todayAmount") or seed.get("todayAmount") or 0.0
+            seed["turnoverRate"] = snapshot.get("turnoverRate")
+            seed["totalMarketCap"] = snapshot.get("totalMarketCap") or seed.get("totalMarketCap") or 0.0
+            seed["floatMarketCap"] = snapshot.get("floatMarketCap") or seed.get("floatMarketCap") or 0.0
+        seen.add(code)
+        extras.append(seed)
+    return extras
+
+
 def build_html(
     dataset: list[dict],
     strong_stocks: list[dict],
@@ -4187,7 +4299,9 @@ def build_html(
             """
         )
     current_modal_codes = {item.get("code") for item in (dataset + strong_stocks) if item.get("code")}
-    report_modal_extras = load_report_modal_extras(current_modal_codes)
+    institution_modal_extras = load_institution_modal_extras(institution_holdings, current_modal_codes)
+    current_modal_codes.update(item.get("code") for item in institution_modal_extras if item.get("code"))
+    report_modal_extras = institution_modal_extras + load_report_modal_extras(current_modal_codes)
     modal_items = dataset + strong_stocks + report_modal_extras
     cap_groups = [
         ("mega", "1000亿以上"),
@@ -6576,7 +6690,11 @@ def build_html(
     const modalIndexByCode = Object.fromEntries(modalItems.map((item, idx) => [item.code, idx]));
     const modalCodeByAlias = {{}};
     function normalizeModalAlias(value) {{
-      return String(value || '').trim().toLowerCase().replace(/\\s+/g, '');
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[Ａ-Ｚａ-ｚ０-９]/g, char => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+        .replace(/[·・.\\s_\\-—–（）()【】\\[\\]{{}}<>《》「」『』"'“”‘’：:，,。；;、/\\\\|$#]/g, '');
     }}
     modalItems.forEach(item => {{
       const aliases = [item.name, item.code, (item.code || '').split('.')[0]];
@@ -7539,7 +7657,7 @@ def build_html(
         const label = escapeHtml(target);
         const matchedCode = modalCodeByAlias[normalizeModalAlias(target)];
         if (!matchedCode) {{
-          return `<span class="report-tag" ${{renderReportHoverAttrs({{ name: target }})}}>${{label}}</span>`;
+          return `<span class="report-tag">${{label}}</span>`;
         }}
         const matchedItem = modalItems[modalIndexByCode[matchedCode]];
         return `<button class="report-target-trigger report-tag-button" type="button" data-code="${{escapeHtml(matchedCode)}}" ${{renderReportHoverAttrs(matchedItem)}}><span class="report-tag">${{label}}</span></button>`;
