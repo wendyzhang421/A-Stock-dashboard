@@ -142,5 +142,29 @@
     "risks": [],
     "date": "2026-06-21",
     "createdAt": 1782041339327
+  },
+  {
+    "id": "social-1782545780413",
+    "kol": "Serenity",
+    "platform": "X",
+    "target": "功率半导体",
+    "targets": [
+      "AOSL",
+      "POWI",
+      "扬杰科技"
+    ],
+    "industry": "功率半导体",
+    "content": "功率半导体已开始涨价，对AOSL至POWI的美国功率半导体主题利好，在800V DC转变完全到来前；扬杰科技宣布今年第二次全面涨价。",
+    "summary": "功率半导体已开始涨价，对AOSL至POWI的美国功率半导体主题利好，在800V DC转变完全到来前；扬杰科技宣布今年第二次全面涨价。",
+    "rawText": "Looks like Power Semis are already starting price hikes.\n\nWhich is bullish thematically for US power semi trade from $AOSL to $POWI, before the 800V DC shift fully hits.\n\nChina's Yangjie Technology, announced a 2nd price increase this year, raising prices across its full product… pic.twitter.com/UrseTyBMFp\n&mdash; Serenity (@aleabitoreddit) June 26, 2026",
+    "translatedText": "看起来功率半导体已经开始涨价。这在主题上利好从$AOSL到$POWI的美国功率半导体交易，在800V DC转变完全到来之前。中国扬杰科技宣布今年第二次涨价，全面提高产品价格…",
+    "sourceUrl": "https://x.com/aleabitoreddit/status/2070304723262210194",
+    "tweetUrl": "https://x.com/aleabitoreddit/status/2070304723262210194",
+    "stance": "",
+    "tags": [],
+    "catalysts": [],
+    "risks": [],
+    "date": "2026-06-26",
+    "createdAt": 1782545780413
   }
 ]
