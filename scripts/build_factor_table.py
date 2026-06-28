@@ -246,11 +246,19 @@ def report_target_set(reports_dir: Path) -> tuple[set[str], dict[str, dict[str, 
     targets: set[str] = set()
     meta: dict[str, dict[str, Any]] = {}
     for item in load_json_list(path):
-        target = str(item.get("target") or "").strip()
-        if not target:
-            continue
-        targets.add(target)
-        meta[target] = item
+        raw_targets = []
+        if item.get("target"):
+            raw_targets.append(item.get("target"))
+        if isinstance(item.get("targets"), list):
+            raw_targets.extend(item.get("targets") or [])
+        if isinstance(item.get("targetCodes"), list):
+            raw_targets.extend(item.get("targetCodes") or [])
+        for raw_target in raw_targets:
+            target = str(raw_target or "").strip()
+            if not target:
+                continue
+            targets.add(target)
+            meta[target] = item
     return targets, meta
 
 
@@ -541,7 +549,7 @@ def build_factor_rows(reports_dir: Path, as_of: date, skip_index_fetch: bool) ->
         name = str(row.get("name") or "")
         code = str(row.get("code") or "")
         raw = calc_raw_factors(row, index_returns)
-        report_meta = target_meta.get(name) or {}
+        report_meta = target_meta.get(code) or target_meta.get(name) or {}
         report_covered = name in targets or code in targets
         pool_tags = set(row.get("_pool_tags") or [])
         if report_covered:

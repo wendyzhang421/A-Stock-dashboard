@@ -42,6 +42,8 @@ WATCHLIST_STATE_PATH = OUT_DIR / "watchlist_state.json"
 RESEARCH_REPORTS_PATH = OUT_DIR / "research_reports.json"
 SOCIAL_MEDIA_POSTS_PATH = OUT_DIR / "social_media_posts.json"
 SOCIAL_KOL_WATCHLIST_PATH = OUT_DIR / "social_kol_watchlist.json"
+STOCK_NAME_ALIASES_PATH = OUT_DIR / "stock_name_aliases.json"
+RESEARCH_STRONG_SCORE_BONUS = 14.0
 TRUST_ENV = os.environ.get("ASTOCK_TRUST_ENV", "1").strip().lower() not in {"0", "false", "no", "off"}
 AS_OF_OVERRIDE = os.environ.get("ASTOCK_AS_OF", "").strip()
 AS_OF = date.fromisoformat(AS_OF_OVERRIDE) if AS_OF_OVERRIDE else datetime.now(timezone(timedelta(hours=8))).date()
@@ -59,6 +61,8 @@ STRONG_MIN_TURNOVER = 5.0
 STRONG_MAX_TURNOVER = 25.0
 STRONG_DISPLAY_LIMIT = 20
 MARKET_INDEXES = [
+    ("上证指数", "000001.SH"),
+    ("深证成指", "399001.SZ"),
     ("创业板指", "399006.SZ"),
     ("沪深300", "000300.SH"),
     ("科创50", "000688.SH"),
@@ -96,6 +100,82 @@ REPORT_MODAL_NAME_MAP = {
 }
 
 
+def normalize_report_alias(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = text.translate(str.maketrans("ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ０１２３４５６７８９", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"))
+    return re.sub(r"[·・.\s_\-—–（）()【】\[\]{}<>《》「」『』\"'“”‘’：:，,。；;、/\\|$#]", "", text)
+
+
+def add_report_alias(index: dict[str, str], alias: object, code: object) -> None:
+    normalized = normalize_report_alias(alias)
+    code_text = str(code or "").strip()
+    if normalized and code_text and normalized not in index:
+        index[normalized] = code_text
+
+
+def build_report_target_code_index() -> dict[str, str]:
+    index: dict[str, str] = {}
+    for name, code in load_report_name_index().items():
+        add_report_alias(index, name, code)
+        add_report_alias(index, code, code)
+        add_report_alias(index, str(code).split(".")[0], code)
+    for path in sorted(OUT_DIR.glob("institution_holdings_*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        rows = []
+        if isinstance(payload, dict):
+            rows.extend(payload.get("stockExposureRows") or [])
+            for fund in payload.get("rows") or []:
+                if isinstance(fund, dict):
+                    rows.extend(fund.get("topHoldings") or [])
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = row.get("name")
+            code = row.get("code")
+            if not name or not code:
+                continue
+            add_report_alias(index, name, code)
+            add_report_alias(index, code, code)
+            add_report_alias(index, str(code).split(".")[0], code)
+    for name, code in REPORT_MODAL_NAME_MAP.items():
+        add_report_alias(index, name, code)
+        add_report_alias(index, code, code)
+        add_report_alias(index, str(code).split(".")[0], code)
+    try:
+        alias_rows = json.loads(STOCK_NAME_ALIASES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        alias_rows = []
+    if isinstance(alias_rows, list):
+        for row in alias_rows:
+            if not isinstance(row, dict):
+                continue
+            name = row.get("name")
+            code = row.get("code")
+            if not name or not code:
+                continue
+            add_report_alias(index, name, code)
+            add_report_alias(index, code, code)
+            add_report_alias(index, str(code).split(".")[0], code)
+            for alias in row.get("aliases") or []:
+                add_report_alias(index, alias, code)
+    return index
+
+
+def resolve_report_target_codes(targets: list[object]) -> list[str]:
+    index = build_report_target_code_index()
+    out: list[str] = []
+    seen: set[str] = set()
+    for target in targets:
+        code = index.get(normalize_report_alias(target))
+        if code and code not in seen:
+            out.append(code)
+            seen.add(code)
+    return out
+
+
 def load_report_name_index() -> dict[str, str]:
     index: dict[str, str] = {}
     for path in sorted(OUT_DIR.glob("watchlist_dashboard_*.json")) + sorted(OUT_DIR.glob("watchlist_strong_stocks_*.json")):
@@ -112,6 +192,22 @@ def load_report_name_index() -> dict[str, str]:
                 index[str(name)] = str(code)
     for name, code in REPORT_MODAL_NAME_MAP.items():
         index.setdefault(name, code)
+    try:
+        alias_rows = json.loads(STOCK_NAME_ALIASES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        alias_rows = []
+    if isinstance(alias_rows, list):
+        for row in alias_rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip()
+            code = str(row.get("code") or "").strip()
+            if name and code:
+                index.setdefault(name, code)
+            for alias in row.get("aliases") or []:
+                alias_text = str(alias or "").strip()
+                if alias_text and code:
+                    index.setdefault(alias_text, code)
     return index
 
 
@@ -192,11 +288,15 @@ def load_research_report_entries() -> list[dict]:
             continue
         if not targets and target:
             targets = [target]
+        target_codes = normalize_target_list(item.get("targetCodes") or item.get("codes") or [])
+        if not target_codes:
+            target_codes = resolve_report_target_codes(targets)
         out.append(
             {
                 "id": str(item.get("id") or f"report-{idx}"),
                 "target": target or (targets[0] if targets else ""),
                 "targets": targets,
+                "targetCodes": target_codes,
                 "content": content,
                 "summary": summary,
                 "industry": industry,
@@ -206,6 +306,18 @@ def load_research_report_entries() -> list[dict]:
             }
         )
     return out
+
+
+def load_research_target_codes() -> set[str]:
+    codes: set[str] = set()
+    for item in load_research_report_entries():
+        for code in item.get("targetCodes") or []:
+            code_text = str(code or "").strip()
+            if code_text:
+                codes.add(code_text)
+        for code in resolve_report_target_codes(item.get("targets") or [item.get("target")]):
+            codes.add(code)
+    return codes
 
 
 def load_social_media_entries() -> list[dict]:
@@ -308,6 +420,12 @@ def load_historical_report_row(code: str) -> dict | None:
     best_score = -1
     paths = sorted(OUT_DIR.glob("watchlist_dashboard_*.json")) + sorted(OUT_DIR.glob("watchlist_strong_stocks_*.json"))
     for path in paths:
+        try:
+            path_date = date.fromisoformat(path.stem.rsplit("_", 1)[-1])
+        except ValueError:
+            path_date = None
+        if path_date and path_date > AS_OF:
+            continue
         try:
             rows = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
@@ -812,6 +930,10 @@ MAIN_BUSINESS_MAP = {
     "688102.SH": "高温合金/特种材料",
     "000962.SZ": "钽铌金属/稀有金属",
     "600353.SH": "电真空器件/军工电子",
+    "688598.SH": "碳基复合材料/光伏热场",
+    "600392.SH": "稀土/有色金属资源",
+    "688131.SH": "分子砌块/CXO",
+    "002859.SZ": "电子元器件薄型载带/离型膜",
 }
 
 RESEARCH_FALLBACK_MAP = {
@@ -1866,6 +1988,34 @@ def normalize_main_business_value(value: str | None) -> str:
     return text
 
 
+@lru_cache(maxsize=1)
+def load_historical_main_business_index() -> dict[str, str]:
+    index: dict[str, str] = {}
+    paths = sorted(OUT_DIR.glob("watchlist_dashboard_*.json"), reverse=True)
+    paths += sorted(OUT_DIR.glob("watchlist_strong_stocks_*.json"), reverse=True)
+    for path in paths:
+        try:
+            path_date = date.fromisoformat(path.stem.rsplit("_", 1)[-1])
+        except ValueError:
+            path_date = None
+        if path_date and path_date > AS_OF:
+            continue
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("code") or "").strip()
+            value = normalize_main_business_value(row.get("mainBusiness"))
+            if code and value and code not in index:
+                index[code] = value
+    return index
+
+
 def infer_main_business_from_segments(payload: dict[str, object] | None) -> str:
     if not isinstance(payload, dict):
         return ""
@@ -1889,6 +2039,7 @@ def infer_main_business_from_segments(payload: dict[str, object] | None) -> str:
 def resolve_main_business(
     code: str,
     *,
+    name: str | None = None,
     industry: str | None = None,
     existing: str | None = None,
     business_segments: dict[str, object] | None = None,
@@ -1903,12 +2054,15 @@ def resolve_main_business(
     segment_hint = infer_main_business_from_segments(business_segments)
     if segment_hint:
         return segment_hint
+    historical_value = normalize_main_business_value(load_historical_main_business_index().get(code))
+    if historical_value:
+        return historical_value
     industry_value = normalize_main_business_value(industry)
-    if industry_value:
-        return industry_value
-    news_hint = infer_main_business_from_text(news_text or "")
+    news_hint = infer_main_business_from_text(" ".join([str(name or ""), industry_value, str(news_text or "")]))
     if news_hint:
         return news_hint
+    if industry_value:
+        return industry_value
     return "-"
 
 
@@ -1998,7 +2152,7 @@ def strong_stock_passes_final_filters(row: dict) -> bool:
     return True
 
 
-def score_strong_stock(row: dict, watch_codes: set[str] | None = None) -> float:
+def score_strong_stock(row: dict, watch_codes: set[str] | None = None, research_codes: set[str] | None = None) -> float:
     score = 0.0
     if matches_mainline_business(row.get("mainBusiness")):
         score += 40.0
@@ -2031,13 +2185,17 @@ def score_strong_stock(row: dict, watch_codes: set[str] | None = None) -> float:
         score += 4.0
     if watch_codes and row.get("code") in watch_codes:
         score += 8.0
+    if research_codes and row.get("code") in research_codes:
+        score += RESEARCH_STRONG_SCORE_BONUS
     return round(score, 4)
 
 
-def finalize_strong_stocks(rows: list[dict], watch_codes: set[str] | None = None) -> list[dict]:
+def finalize_strong_stocks(rows: list[dict], watch_codes: set[str] | None = None, research_codes: set[str] | None = None) -> list[dict]:
     filtered = [row for row in rows if strong_stock_passes_final_filters(row)]
+    if research_codes is None:
+        research_codes = load_research_target_codes()
     for row in filtered:
-        row["strongScore"] = score_strong_stock(row, watch_codes)
+        row["strongScore"] = score_strong_stock(row, watch_codes, research_codes)
     filtered.sort(
         key=lambda row: (
             row.get("strongScore") or 0,
@@ -2332,7 +2490,7 @@ def fetch_strong_stocks(trade_date: date) -> list[dict]:
                 "code": code,
                 "name": row["name"],
                 "industry": industry,
-                "mainBusiness": resolve_main_business(code, industry=industry),
+                "mainBusiness": resolve_main_business(code, name=row.get("name"), industry=industry),
                 "latestClose": snap["latestClose"],
                 "totalMarketCap": total_cap,
                 "floatMarketCap": snap["floatMarketCap"],
@@ -2353,6 +2511,7 @@ def fetch_strong_stocks(trade_date: date) -> list[dict]:
             }
             row["mainBusiness"] = resolve_main_business(
                 row["code"],
+                name=row.get("name"),
                 industry=row.get("industry"),
                 existing=row.get("mainBusiness"),
                 business_segments=row.get("businessSegments"),
@@ -2446,7 +2605,7 @@ def fetch_strong_stocks_via_ifind(access_token: str, trade_date: date) -> list[d
                 "code": code,
                 "name": code_to_name.get(code, code),
                 "industry": industry,
-                "mainBusiness": resolve_main_business(code, industry=industry),
+                "mainBusiness": resolve_main_business(code, name=code_to_name.get(code, code), industry=industry),
                 "latestClose": latest_close,
                 "totalMarketCap": total_cap,
                 "floatMarketCap": float_cap,
@@ -2483,6 +2642,7 @@ def fetch_strong_stocks_via_ifind(access_token: str, trade_date: date) -> list[d
     for row in strong_rows:
         row["mainBusiness"] = resolve_main_business(
             row["code"],
+            name=row.get("name"),
             industry=row.get("industry"),
             existing=row.get("mainBusiness"),
             business_segments=row.get("businessSegments"),
@@ -2839,7 +2999,7 @@ def build_dataset() -> list[dict]:
         top_holders = fetch_top5_shareholders(code)
         business_segments = fetch_top3_business_segments(code)
         top_customers = fetch_top5_customers(name, code)
-        main_business = resolve_main_business(code, industry=industry, business_segments=business_segments)
+        main_business = resolve_main_business(code, name=name, industry=industry, business_segments=business_segments)
 
         dataset.append(
             {
@@ -3063,7 +3223,7 @@ def fetch_market_index_cards_public() -> list[dict[str, object]]:
     cards: list[dict[str, object]] = []
     for name, code in MARKET_INDEXES:
         parts = parsed.get(index_code_to_qq_symbol(code)) or []
-        if len(parts) < 36:
+        if len(parts) < 37:
             continue
         latest_close = to_float(parts[3])
         prev_close = to_float(parts[4])
@@ -3802,6 +3962,7 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
             "name": name,
             "mainBusiness": resolve_main_business(
                 code,
+                name=name,
                 industry=(historical.get("industry") if historical else "") or "",
                 existing=historical.get("mainBusiness") if historical else "",
                 business_segments=historical_segments,
@@ -3868,6 +4029,7 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
                 pass
         seed["mainBusiness"] = resolve_main_business(
             code,
+            name=seed.get("name") or name,
             industry=seed.get("industry"),
             existing=seed.get("mainBusiness"),
             business_segments=seed.get("businessSegments"),
@@ -3906,6 +4068,7 @@ def load_report_modal_extras(current_codes: set[str], limit: int = 220) -> list[
                     pass
             row["mainBusiness"] = resolve_main_business(
                 code,
+                name=row.get("name"),
                 industry=row.get("industry"),
                 existing=row.get("mainBusiness"),
                 business_segments=row.get("businessSegments"),
@@ -5466,6 +5629,43 @@ def build_html(
       margin: 0;
       cursor: pointer;
     }}
+    .report-target-editor {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }}
+    .report-target-editor .report-input {{
+      min-height: 34px;
+      padding: 8px 10px;
+      font-size: 12px;
+    }}
+    .report-target-add-button {{
+      border: 1px solid rgba(83,242,229,0.18);
+      border-radius: var(--radius-chip);
+      background: rgba(83,242,229,0.10);
+      color: var(--accent);
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }}
+    .report-target-add-button:hover {{
+      background: rgba(83,242,229,0.16);
+    }}
+    .report-target-note {{
+      min-height: 16px;
+      color: var(--muted);
+      font-size: 11px;
+    }}
+    .report-target-note[data-state="error"] {{
+      color: #f89b9b;
+    }}
+    body[data-theme="light"] .report-target-add-button {{
+      border-color: rgba(0,127,140,0.18);
+      background: rgba(0,127,140,0.08);
+      color: #0f6f78;
+    }}
     .report-head-actions {{
       display: flex;
       align-items: center;
@@ -6021,8 +6221,8 @@ def build_html(
       --line-strong: #dddddf;
       --accent: #1f1f1f;
       --accent-soft: rgba(0, 0, 0, 0.04);
-      --rise: #3a8f52;
-      --fall: #d46a6a;
+      --rise: #d9364f;
+      --fall: #148f5a;
       --warn: #d7a94b;
       background: #ffffff !important;
       color: #1f1f1f;
@@ -6037,8 +6237,8 @@ def build_html(
       --line-strong: #5a5a5a;
       --accent: #f2f2f2;
       --accent-soft: rgba(255, 255, 255, 0.06);
-      --rise: #7bd88f;
-      --fall: #ff8f8f;
+      --rise: #ff637a;
+      --fall: #41d989;
       --warn: #f0c674;
       background: #333333 !important;
       color: #f2f2f2;
@@ -6204,6 +6404,26 @@ def build_html(
     .report-textarea::placeholder {{
       color: #9f9f9f !important;
     }}
+    .pct-rise,
+    .summary-table td.pct-rise,
+    .market-card-pct.pct-rise,
+    .report-hover-value.pct-rise {{
+      color: var(--rise) !important;
+      font-weight: 800;
+    }}
+    .pct-fall,
+    .summary-table td.pct-fall,
+    .market-card-pct.pct-fall,
+    .report-hover-value.pct-fall {{
+      color: var(--fall) !important;
+      font-weight: 800;
+    }}
+    .pct-flat,
+    .summary-table td.pct-flat,
+    .market-card-pct.pct-flat,
+    .report-hover-value.pct-flat {{
+      color: var(--muted) !important;
+    }}
   </style>
 </head>
 <body>
@@ -6251,7 +6471,7 @@ def build_html(
       <div class="market-overview-head">
         <div>
           <h2>整体市场指数</h2>
-          <p>仅保留创业板指、沪深300、科创50</p>
+          <p>覆盖上证指数、深证成指、创业板指、沪深300、科创50</p>
         </div>
         <span class="pill">统计日：{overview_trade_date}</span>
       </div>
@@ -6436,6 +6656,11 @@ def build_html(
             <div class="report-detail-section">
               <h4>涉及标的</h4>
               <div id="report-detail-targets"></div>
+              <div class="report-target-editor">
+                <input id="report-target-manual-input" class="report-input" type="text" placeholder="手动补充标的，可用逗号/空格分隔" />
+                <button id="report-target-add-button" class="report-target-add-button" type="button">添加</button>
+              </div>
+              <div class="report-target-note" id="report-target-manual-note"></div>
             </div>
             <div class="report-detail-section">
               <h4>核心观点</h4>
@@ -6822,6 +7047,9 @@ def build_html(
     const reportDetailSubtitle = document.getElementById('report-detail-subtitle');
     const reportDetailMeta = document.getElementById('report-detail-meta');
     const reportDetailTargets = document.getElementById('report-detail-targets');
+    const reportTargetManualInput = document.getElementById('report-target-manual-input');
+    const reportTargetAddButton = document.getElementById('report-target-add-button');
+    const reportTargetManualNote = document.getElementById('report-target-manual-note');
     const reportDetailSummary = document.getElementById('report-detail-summary');
     const reportDetailSource = document.getElementById('report-detail-source');
     const reportActionNote = document.getElementById('report-action-note');
@@ -6941,11 +7169,37 @@ def build_html(
       return values.map(normalizeTargetLabel).filter(Boolean).slice(0, limit);
     }}
 
+    function normalizeTargetCodes(values, limit = 12) {{
+      if (!Array.isArray(values)) return [];
+      const out = [];
+      const seen = new Set();
+      values.forEach(value => {{
+        const code = String(value || '').trim().toUpperCase();
+        if (!code || seen.has(code)) return;
+        seen.add(code);
+        out.push(code);
+      }});
+      return out.slice(0, limit);
+    }}
+
+    function resolveTargetCodesFromLabels(targets) {{
+      const out = [];
+      const seen = new Set();
+      (Array.isArray(targets) ? targets : []).forEach(target => {{
+        const matchedCode = modalCodeByAlias[normalizeModalAlias(target)];
+        if (!matchedCode || seen.has(matchedCode)) return;
+        seen.add(matchedCode);
+        out.push(matchedCode);
+      }});
+      return out.slice(0, 12);
+    }}
+
     function normalizeReportEntry(entry, fallbackId) {{
       if (!entry || typeof entry !== 'object') return null;
       const content = String(entry.content || entry.summary || '').trim();
       const targets = normalizeTargetList(entry.targets);
       const target = normalizeTargetLabel(entry.target) || targets[0] || '';
+      const targetCodes = normalizeTargetCodes(entry.targetCodes || entry.codes || resolveTargetCodesFromLabels(targets.length ? targets : [target]));
       if (!content) return null;
       const date = String(entry.date || '');
       const createdAt = Number(entry.createdAt || Date.now());
@@ -6954,6 +7208,7 @@ def build_html(
         id,
         target,
         targets: targets.length ? targets : (target ? [target] : []),
+        targetCodes,
         content,
         summary: String(entry.summary || content).trim(),
         industry: String(entry.industry || '未分类').trim(),
@@ -7283,6 +7538,7 @@ def build_html(
     const REPORT_ENTRIES_KEY = 'astock_report_entries_v1';
     const SOCIAL_TRACKERS_KEY = 'astock_social_trackers_v1';
     const SOCIAL_ENTRIES_KEY = 'astock_social_entries_v1';
+    let activeReportDetailId = '';
 
     function loadWatchlistStatus() {{
       try {{
@@ -7651,6 +7907,75 @@ def build_html(
       ].join(' ');
     }}
 
+    function parseManualReportTargets(value) {{
+      return String(value || '')
+        .split(/[\\s,，、;；]+/)
+        .map(normalizeTargetLabel)
+        .filter(Boolean)
+        .slice(0, 12);
+    }}
+
+    function mergeTargetLabels(existingTargets, addedTargets) {{
+      const out = [];
+      const seen = new Set();
+      [...(Array.isArray(existingTargets) ? existingTargets : []), ...addedTargets].forEach(target => {{
+        const label = normalizeTargetLabel(target);
+        if (!label) return;
+        const key = normalizeModalAlias(label);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        out.push(label);
+      }});
+      return out.slice(0, 12);
+    }}
+
+    function setReportTargetManualNote(message, state = '') {{
+      if (!reportTargetManualNote) return;
+      reportTargetManualNote.textContent = message || '';
+      if (state) {{
+        reportTargetManualNote.dataset.state = state;
+      }} else {{
+        delete reportTargetManualNote.dataset.state;
+      }}
+    }}
+
+    async function addManualTargetsToActiveReport() {{
+      const reportId = activeReportDetailId;
+      if (!reportId) return;
+      const addedTargets = parseManualReportTargets(reportTargetManualInput?.value || '');
+      if (!addedTargets.length) {{
+        setReportTargetManualNote('请输入要补充的标的。', 'error');
+        return;
+      }}
+      const entries = loadReportEntries();
+      const idx = entries.findIndex(item => item.id === reportId);
+      if (idx < 0) {{
+        setReportTargetManualNote('没有找到当前研究记录。', 'error');
+        return;
+      }}
+      const entry = entries[idx];
+      const mergedTargets = mergeTargetLabels(entry.targets?.length ? entry.targets : [entry.target], addedTargets);
+      const mergedTargetCodes = normalizeTargetCodes([
+        ...(Array.isArray(entry.targetCodes) ? entry.targetCodes : []),
+        ...resolveTargetCodesFromLabels(mergedTargets),
+      ]);
+      const beforeCount = Array.isArray(entry.targets) ? entry.targets.length : 0;
+      entries[idx] = normalizeReportEntry({{
+        ...entry,
+        target: mergedTargets[0] || entry.target || '',
+        targets: mergedTargets,
+        targetCodes: mergedTargetCodes,
+      }}, entry.id);
+      saveReportEntries(entries);
+      renderReportEntries();
+      syncSyntheticWatchlistRows();
+      openReportDetailDrawer(reportId);
+      if (reportTargetManualInput) reportTargetManualInput.value = '';
+      const addedCount = Math.max(0, mergedTargets.length - beforeCount);
+      setReportTargetManualNote(addedCount ? `已添加 ${{addedCount}} 个标的。` : '标的已存在。');
+      await queueDashboardStateSync(undefined, {{ promptForToken: false }});
+    }}
+
     function renderTargetTags(targets) {{
       if (!Array.isArray(targets) || !targets.length) return '';
       const html = targets.map(target => {{
@@ -7668,6 +7993,7 @@ def build_html(
     function openReportDetailDrawer(reportId) {{
       const entry = loadReportEntries().find(item => item.id === reportId);
       if (!entry) return;
+      activeReportDetailId = reportId;
       const title = entry.target || (Array.isArray(entry.targets) && entry.targets[0]) || entry.industry || '投研详情';
       const subtitleParts = [entry.industry || '未分类', entry.date || '无日期'].filter(Boolean);
       const metaItems = [
@@ -7679,6 +8005,8 @@ def build_html(
       reportDetailSubtitle.textContent = subtitleParts.join(' · ');
       reportDetailMeta.innerHTML = metaItems.map(item => `<span>${{escapeHtml(item)}}</span>`).join('');
       reportDetailTargets.innerHTML = renderTargetTags(entry.targets) || '<span class="report-tag">未提及</span>';
+      if (reportTargetManualInput) reportTargetManualInput.value = '';
+      setReportTargetManualNote('');
       reportDetailSummary.textContent = entry.summary || entry.content || '暂无';
       reportDetailSource.textContent = entry.rawText || '暂无原文';
       reportDetailDrawer.classList.add('open');
@@ -7686,6 +8014,7 @@ def build_html(
     }}
 
     function closeReportDetailDrawer() {{
+      activeReportDetailId = '';
       reportDetailDrawer.classList.remove('open');
       reportDetailDrawer.setAttribute('aria-hidden', 'true');
     }}
@@ -8487,6 +8816,22 @@ def build_html(
 
     reportDetailDrawer.addEventListener('focusout', hideReportTargetHover);
 
+    reportTargetAddButton?.addEventListener('click', () => {{
+      addManualTargetsToActiveReport().catch(error => {{
+        console.error(error);
+        setReportTargetManualNote(error?.message || '添加失败，请稍后重试。', 'error');
+      }});
+    }});
+
+    reportTargetManualInput?.addEventListener('keydown', event => {{
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      addManualTargetsToActiveReport().catch(error => {{
+        console.error(error);
+        setReportTargetManualNote(error?.message || '添加失败，请稍后重试。', 'error');
+      }});
+    }});
+
     reportDetailDrawer.addEventListener('click', event => {{
       const trigger = event.target.closest('.report-target-trigger');
       if (trigger) {{
@@ -8603,6 +8948,7 @@ def hydrate_cached_dataset(dataset: list[dict]) -> list[dict]:
         code = item.get("code", "")
         item["mainBusiness"] = resolve_main_business(
             code,
+            name=item.get("name"),
             industry=item.get("industry", ""),
             existing=item.get("mainBusiness", ""),
             business_segments=item.get("businessSegments"),
@@ -8662,6 +9008,7 @@ def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
         latest_news = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
         item["mainBusiness"] = resolve_main_business(
             code,
+            name=item.get("name"),
             industry=industry,
             existing=item.get("mainBusiness", ""),
             business_segments=item.get("businessSegments"),
@@ -8687,6 +9034,42 @@ def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
         item["topCustomers"] = item.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
         item["kline"] = item.get("kline") or []
         item["last5"] = item.get("last5") or []
+    return rows
+
+
+def strengthen_main_business_for_rows(rows: list[dict]) -> list[dict]:
+    for item in rows:
+        code = str(item.get("code") or "").strip()
+        if not code:
+            continue
+        latest_news = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
+        if TRUST_ENV and not normalize_main_business_value(item.get("industry")):
+            try:
+                item["industry"] = fetch_industry(code) or item.get("industry") or ""
+            except Exception:
+                item["industry"] = item.get("industry") or ""
+        if TRUST_ENV and not normalize_main_business_value(item.get("mainBusiness")):
+            segments = item.get("businessSegments") or {}
+            if not (isinstance(segments, dict) and segments.get("items")):
+                try:
+                    segments = fetch_top3_business_segments(code)
+                    if segments.get("items"):
+                        item["businessSegments"] = segments
+                except Exception:
+                    pass
+        item["mainBusiness"] = resolve_main_business(
+            code,
+            name=item.get("name"),
+            industry=item.get("industry"),
+            existing=item.get("mainBusiness"),
+            business_segments=item.get("businessSegments"),
+            news_text=" ".join(
+                [
+                    str(latest_news.get("title") or ""),
+                    str(latest_news.get("summary") or ""),
+                ]
+            ),
+        )
     return rows
 
 
@@ -8896,6 +9279,7 @@ def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
                 "industry": industry,
                 "mainBusiness": resolve_main_business(
                     code,
+                    name=candidate.get("name"),
                     industry=industry,
                     existing=prev_row.get("mainBusiness"),
                     business_segments=prev_row.get("businessSegments"),
@@ -8929,6 +9313,7 @@ def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
                 strong.append(row)
     strong = finalize_strong_stocks(strong, {row["code"] for row in watch})
     strong = supplement_strong_stocks_from_watchlist(watch, strong)
+    strong = strengthen_main_business_for_rows(strong)
     market_overview = fetch_market_overview(access_token)
     institution_holdings = fetch_institution_holdings(access_token)
 
@@ -8987,6 +9372,7 @@ def main() -> int:
         row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
         row["mainBusiness"] = resolve_main_business(
             row["code"],
+            name=row.get("name"),
             industry=row.get("industry"),
             existing=row.get("mainBusiness"),
             business_segments=row.get("businessSegments"),
@@ -9002,6 +9388,7 @@ def main() -> int:
         row["latestNews"] = news_map.get(row["code"], {"time": "", "summary": "", "title": "", "link": ""})
         row["mainBusiness"] = resolve_main_business(
             row["code"],
+            name=row.get("name"),
             industry=row.get("industry"),
             existing=row.get("mainBusiness"),
             business_segments=row.get("businessSegments"),
@@ -9016,6 +9403,7 @@ def main() -> int:
     strong_stocks = backfill_market_caps(strong_stocks)
     strong_stocks = finalize_strong_stocks(strong_stocks, {row["code"] for row in dataset})
     strong_stocks = supplement_strong_stocks_from_watchlist(dataset, strong_stocks)
+    strong_stocks = strengthen_main_business_for_rows(strong_stocks)
     if access_token is None:
         try:
             access_token = get_access_token()

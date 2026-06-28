@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const REPORTS_DIR = path.join(process.cwd(), "reports");
+const STOCK_ALIAS_PATH = path.join(REPORTS_DIR, "stock_name_aliases.json");
 const STOCK_INDEX_LIMIT = 320;
 const STOCK_ALIAS_OVERRIDES = {
   "江海股份": "002484.SZ",
@@ -148,6 +149,12 @@ function addStockIndexRow(index, row) {
   index.byAlias.set(normalizeMatchText(code), { name, code, alias: code });
   const bareCode = code.split(".")[0];
   index.byAlias.set(normalizeMatchText(bareCode), { name, code, alias: bareCode });
+  if (Array.isArray(row.aliases)) {
+    for (const alias of row.aliases) {
+      const normalized = normalizeMatchText(alias);
+      if (normalized) index.byAlias.set(normalized, { name, code, alias });
+    }
+  }
 }
 
 function addReportPayloadToStockIndex(index, payload) {
@@ -179,6 +186,10 @@ function buildStockIndex() {
   ]) {
     addReportPayloadToStockIndex(index, safeReadJson(filePath));
   }
+  const aliasRows = safeReadJson(STOCK_ALIAS_PATH);
+  if (Array.isArray(aliasRows)) {
+    for (const row of aliasRows) addStockIndexRow(index, row);
+  }
   for (const [name, code] of Object.entries(STOCK_ALIAS_OVERRIDES)) {
     addStockIndexRow(index, { name, code });
   }
@@ -208,6 +219,24 @@ function pushUniqueTarget(out, seen, value) {
   if (!key || seen.has(key)) return;
   seen.add(key);
   out.push(text);
+}
+
+function resolveStockTarget(value) {
+  const label = normalizeTargetLabel(value);
+  if (!label) return null;
+  const index = buildStockIndex();
+  const code = normalizeStockCode(label);
+  const normalized = normalizeMatchText(label);
+  const mapped = (code && index.byCode.get(code)) || index.byAlias.get(normalized);
+  return mapped ? { name: mapped.name, code: mapped.code } : null;
+}
+
+function pushVerifiedTarget(out, codes, seenCodes, value) {
+  const resolved = resolveStockTarget(value);
+  if (!resolved || seenCodes.has(resolved.code)) return;
+  seenCodes.add(resolved.code);
+  out.push(resolved.name);
+  codes.push(resolved.code);
 }
 
 function pushExplicitTarget(out, seen, value) {
@@ -260,27 +289,23 @@ function extractIndexedTargets(rawText, limit = 12) {
 }
 
 function enrichTargets(structuredTargets, rawText, limit = 12) {
-  const out = [];
-  const seen = new Set();
-  const index = buildStockIndex();
-  const add = (value) => {
-    const label = normalizeTargetLabel(value);
-    if (!label) return;
-    const code = normalizeStockCode(label);
-    const normalized = normalizeMatchText(label);
-    const mapped = (code && index.byCode.get(code)) || index.byAlias.get(normalized);
-    pushUniqueTarget(out, seen, mapped?.name || label);
-  };
+  const targets = [];
+  const targetCodes = [];
+  const seenCodes = new Set();
+  const add = (value) => pushVerifiedTarget(targets, targetCodes, seenCodes, value);
   for (const target of structuredTargets || []) add(target);
   for (const target of extractIndexedTargets(rawText, limit)) add(target);
   for (const target of extractExplicitTargetCandidates(rawText, limit)) add(target);
-  return out.slice(0, limit);
+  return {
+    targets: targets.slice(0, limit),
+    targetCodes: targetCodes.slice(0, limit),
+  };
 }
 
 function sanitizeAnalysis(payload, rawText, fallbackDate) {
   const summary = String(payload?.summary || "").trim();
   const industry = String(payload?.industry || "").trim();
-  const targets = enrichTargets(normalizeList(payload?.targets, 12), rawText, 12);
+  const { targets, targetCodes } = enrichTargets(normalizeList(payload?.targets, 12), rawText, 12);
   if (!summary || !industry) {
     throw new Error("Model output missing summary or industry");
   }
@@ -290,6 +315,7 @@ function sanitizeAnalysis(payload, rawText, fallbackDate) {
     summary,
     rawText: String(rawText || "").trim(),
     targets,
+    targetCodes,
     content: summary,
   };
 }

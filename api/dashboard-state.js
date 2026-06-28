@@ -82,6 +82,20 @@ function normalizeTargetList(values, limit) {
   return values.map(normalizeTargetLabel).filter(Boolean).slice(0, limit);
 }
 
+function normalizeCodeList(values, limit) {
+  if (!Array.isArray(values)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const code = String(value || "").trim().toUpperCase();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    out.push(code);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 function sanitizeReports(payload) {
   if (!Array.isArray(payload)) return [];
   return payload
@@ -90,6 +104,7 @@ function sanitizeReports(payload) {
       const content = String(item.content || item.summary || "").trim();
       if (!content) return null;
       const targets = normalizeTargetList(item.targets, 12);
+      const targetCodes = normalizeCodeList(item.targetCodes || item.codes, 12);
       const target = normalizeTargetLabel(item.target) || targets[0] || "";
       const date = String(item.date || "").trim();
       const createdAt = Number(item.createdAt || Date.now());
@@ -101,6 +116,7 @@ function sanitizeReports(payload) {
         id,
         target,
         targets: targets.length ? targets : target ? [target] : [],
+        targetCodes,
         content,
         summary,
         industry,
