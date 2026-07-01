@@ -2423,11 +2423,11 @@
     "turnoverRate": 2.4540606951871435,
     "todayPct": 2.8192371475953637,
     "latestNews": {
-      "time": "07-01 00:00",
-      "summary": "汇川技术:关于回购公司股份的进展公告",
-      "title": "汇川技术:关于回购公司股份的进展公告",
-      "link": "http://data.eastmoney.com/notices/detail/300124/AN202607011826630877.html",
-      "isRecent": true
+      "time": "",
+      "summary": "",
+      "title": "",
+      "link": "",
+      "isRecent": false
     },
     "research": {
       "revenue2025": "",
@@ -3221,9 +3221,9 @@
     ],
     "latestNews": {
       "time": "07-01 00:00",
-      "summary": "德明利:关于独立董事获得独立董事培训证明的公告",
-      "title": "德明利:关于独立董事获得独立董事培训证明的公告",
-      "link": "http://data.eastmoney.com/notices/detail/001309/AN202606301826588261.html",
+      "summary": "德明利:关于2023年限制性股票激励计划预留部分限制性股票第二个解除限售期解除限售股份上市流通的提示性公告",
+      "title": "德明利:关于2023年限制性股票激励计划预留部分限制性股票第二个解除限售期解除限售股份上市流通的提示性公告",
+      "link": "http://data.eastmoney.com/notices/detail/001309/AN202606301826588527.html",
       "isRecent": true
     }
   },
@@ -17125,10 +17125,10 @@
       ]
     ],
     "latestNews": {
-      "time": "07-01 00:00",
-      "summary": "拉普拉斯:2026年第三次临时股东会决议公告",
-      "title": "拉普拉斯:2026年第三次临时股东会决议公告",
-      "link": "http://data.eastmoney.com/notices/detail/688726/AN202606301826599700.html",
+      "time": "06-30 00:00",
+      "summary": "拉普拉斯:关于股东减持股份结果公告",
+      "title": "拉普拉斯:关于股东减持股份结果公告",
+      "link": "http://data.eastmoney.com/notices/detail/688726/AN202606291826547689.html",
       "isRecent": true
     }
   },
