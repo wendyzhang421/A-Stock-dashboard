@@ -73,11 +73,17 @@ jobs:
         shell: bash
         run: |
           set +e
-          python scripts/cloud_refresh_dashboard.py "${{ steps.refresh-date.outputs.value }}"
-          status=$?
-          if [ "${status}" -ne 0 ]; then
-            echo "Cloud refresh failed; keeping the latest committed reports as deployment fallback."
-            echo "Cloud refresh failed for ${{ steps.refresh-date.outputs.value }}; deployed fallback reports instead." >> "${GITHUB_STEP_SUMMARY}"
+          refresh_date="${{ steps.refresh-date.outputs.value }}"
+          if [ -f "reports/watchlist_dashboard_${refresh_date}.html" ] && [ -f "reports/watchlist_strong_stocks_${refresh_date}.json" ]; then
+            echo "Using committed reports for ${refresh_date}; skipping live refresh."
+            echo "Using committed reports for ${refresh_date}; skipped live refresh." >> "${GITHUB_STEP_SUMMARY}"
+          else
+            timeout "${ASTOCK_REFRESH_STEP_TIMEOUT_SECONDS:-1200}" python scripts/cloud_refresh_dashboard.py "${refresh_date}"
+            status=$?
+            if [ "${status}" -ne 0 ]; then
+              echo "Cloud refresh failed or timed out; keeping the latest committed reports as deployment fallback."
+              echo "Cloud refresh failed or timed out for ${refresh_date}; deployed fallback reports instead." >> "${GITHUB_STEP_SUMMARY}"
+            fi
           fi
           exit 0
 
