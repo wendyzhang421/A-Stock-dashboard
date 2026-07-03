@@ -1,0 +1,1512 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AStock 交易终端 UI</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f6;
+      --surface: #ffffff;
+      --surface-2: #f7f9fb;
+      --surface-3: #edf2f7;
+      --ink: #17202a;
+      --muted: #6d7887;
+      --soft: #98a3b2;
+      --line: #dce3eb;
+      --line-strong: #c9d2dd;
+      --accent: #1d6f8f;
+      --accent-2: #6a7b3f;
+      --warn: #bd6b1f;
+      --rise: #d7424c;
+      --rise-soft: #fff0f1;
+      --fall: #0b9368;
+      --fall-soft: #e9fbf4;
+      --flat: #7d8794;
+      --shadow: 0 14px 32px rgba(24, 39, 56, 0.08);
+      --chart-grid: rgba(45, 68, 88, 0.12);
+      --sidebar-w: 248px;
+      --right-w: 324px;
+    }
+
+    body[data-terminal="dark"] {
+      color-scheme: dark;
+      --bg: #111314;
+      --surface: #191c1d;
+      --surface-2: #202424;
+      --surface-3: #292d2b;
+      --ink: #edf0ea;
+      --muted: #a8afa8;
+      --soft: #747d77;
+      --line: #303735;
+      --line-strong: #47514a;
+      --accent: #55c3b4;
+      --accent-2: #d2a54f;
+      --warn: #f0a84a;
+      --rise: #ff6674;
+      --rise-soft: rgba(255, 102, 116, 0.12);
+      --fall: #35d095;
+      --fall-soft: rgba(53, 208, 149, 0.12);
+      --flat: #9aa39d;
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+      --chart-grid: rgba(213, 221, 208, 0.10);
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .terminal {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: var(--sidebar-w) minmax(720px, 1fr) var(--right-w);
+      grid-template-rows: 58px minmax(0, 1fr);
+      background: var(--bg);
+    }
+
+    .topbar {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--right-w);
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .brand {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 0 18px;
+      border-right: 1px solid var(--line);
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--ink);
+      color: var(--surface);
+      font-weight: 820;
+    }
+
+    .brand strong,
+    .market-title strong,
+    .module-title strong,
+    .ticket-head strong {
+      display: block;
+      color: var(--ink);
+      font-weight: 760;
+      line-height: 1.2;
+    }
+
+    .brand span,
+    .market-title span,
+    .module-title span,
+    .ticket-head span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .top-center {
+      height: 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      overflow: hidden;
+    }
+
+    .search {
+      width: min(380px, 30vw);
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      border-radius: 7px;
+      flex: 0 1 auto;
+    }
+
+    .search input {
+      width: 100%;
+      min-width: 0;
+      color: var(--ink);
+      border: 0;
+      outline: 0;
+      background: transparent;
+    }
+
+    .search input::placeholder {
+      color: var(--soft);
+    }
+
+    .ticker-tape {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow: hidden;
+      flex: 1 1 auto;
+    }
+
+    .ticker {
+      height: 32px;
+      min-width: max-content;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--muted);
+    }
+
+    .ticker b {
+      color: var(--ink);
+      font-weight: 760;
+    }
+
+    .positive { color: var(--rise) !important; }
+    .negative { color: var(--fall) !important; }
+    .neutral { color: var(--flat) !important; }
+
+    .top-actions {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 0 14px;
+      border-left: 1px solid var(--line);
+    }
+
+    .segmented {
+      height: 34px;
+      display: inline-grid;
+      grid-auto-flow: column;
+      gap: 3px;
+      padding: 3px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+    }
+
+    .segmented button,
+    .icon-btn,
+    .trade-btn,
+    .tab-btn {
+      border: 0;
+      color: var(--muted);
+      background: transparent;
+      border-radius: 6px;
+      min-width: 28px;
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+    }
+
+    .segmented button {
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .segmented button.active {
+      color: var(--ink);
+      background: var(--surface);
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+    }
+
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .icon-btn:hover,
+    .tab-btn.active {
+      color: var(--ink);
+      border-color: var(--line-strong);
+      background: var(--surface-2);
+    }
+
+    .icon {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: 0 0 auto;
+    }
+
+    .sidebar,
+    .rightbar {
+      min-height: calc(100vh - 58px);
+      background: var(--surface);
+      overflow: auto;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      padding: 14px;
+    }
+
+    .rightbar {
+      border-left: 1px solid var(--line);
+      padding: 14px;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 14px;
+      overflow: auto;
+    }
+
+    .section-label {
+      margin: 14px 2px 8px;
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 780;
+      text-transform: uppercase;
+    }
+
+    .watch-nav {
+      display: grid;
+      gap: 5px;
+    }
+
+    .nav-item {
+      width: 100%;
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+    }
+
+    .nav-item strong {
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 730;
+    }
+
+    .nav-item span {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--soft);
+    }
+
+    .nav-item.active,
+    .nav-item:hover {
+      border-color: var(--line);
+      background: var(--surface-2);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+      flex: 0 0 auto;
+    }
+
+    .watchlist {
+      display: grid;
+      gap: 6px;
+    }
+
+    .symbol-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      padding: 10px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      text-align: left;
+    }
+
+    .symbol-row.active {
+      border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+      background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    }
+
+    .symbol-row strong {
+      display: block;
+      color: var(--ink);
+      font-weight: 760;
+    }
+
+    .symbol-row small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .symbol-price {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-weight: 760;
+    }
+
+    .mini-meter {
+      margin-top: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+    }
+
+    .meter-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meter-track {
+      height: 7px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: var(--surface-3);
+    }
+
+    .meter-fill {
+      width: 68%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--fall), var(--warn), var(--rise));
+    }
+
+    .market-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: stretch;
+      margin-bottom: 12px;
+    }
+
+    .instrument {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .instrument-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .market-title {
+      min-width: 0;
+    }
+
+    .market-title strong {
+      font-size: clamp(20px, 2.2vw, 32px);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .quote-block {
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .quote-price {
+      color: var(--rise);
+      font-size: clamp(24px, 3vw, 38px);
+      font-weight: 800;
+      line-height: 0.95;
+    }
+
+    .quote-change {
+      margin-bottom: 2px;
+      color: var(--rise);
+      font-size: 15px;
+      font-weight: 760;
+    }
+
+    .stat-grid {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(92px, 1fr));
+      gap: 8px;
+    }
+
+    .stat {
+      min-height: 58px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-2);
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 6px;
+      color: var(--ink);
+      font-size: 15px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .risk-tile {
+      width: 270px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .risk-score {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .risk-score strong {
+      color: var(--warn);
+      font-size: 30px;
+    }
+
+    .risk-score span {
+      color: var(--muted);
+      text-align: right;
+      line-height: 1.35;
+    }
+
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 286px;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .module {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .module-head {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .module-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .tab-btn {
+      min-width: 34px;
+      min-height: 28px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .chart-area {
+      position: relative;
+      height: min(48vh, 520px);
+      min-height: 390px;
+      padding: 10px;
+      background: var(--surface-2);
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .chart-badges {
+      position: absolute;
+      left: 22px;
+      top: 22px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      max-width: calc(100% - 44px);
+      pointer-events: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      padding: 0 8px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 86%, transparent);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 720;
+      backdrop-filter: blur(10px);
+    }
+
+    .below-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .flow-panel {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .flow-item {
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-2);
+    }
+
+    .flow-item span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .flow-item strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 18px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .news-list,
+    .position-list,
+    .alert-list {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .news-item,
+    .position-row,
+    .alert-row {
+      display: grid;
+      gap: 4px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-2);
+    }
+
+    .news-item strong,
+    .alert-row strong {
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .news-item span,
+    .alert-row span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .depth {
+      padding: 12px;
+    }
+
+    .depth-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 38px 1fr 1fr;
+      gap: 8px;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 8px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      overflow: hidden;
+    }
+
+    .depth-row::before {
+      content: "";
+      position: absolute;
+      inset: 4px 0 4px auto;
+      width: var(--w);
+      border-radius: 4px;
+      background: var(--depth-color);
+      opacity: 0.18;
+    }
+
+    .depth-row span,
+    .depth-row strong {
+      position: relative;
+      z-index: 1;
+    }
+
+    .depth-row strong {
+      text-align: right;
+      color: var(--ink);
+    }
+
+    .ticket {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+
+    .ticket-head {
+      min-height: 48px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .ticket-form {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 720;
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      min-height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      outline: 0;
+      color: var(--ink);
+      background: var(--surface-2);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .trade-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .trade-btn {
+      min-height: 40px;
+      color: #fff;
+      font-weight: 780;
+    }
+
+    .trade-btn.buy { background: var(--rise); }
+    .trade-btn.sell { background: var(--fall); }
+
+    .quick-tags {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .quick-tags button {
+      min-height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--muted);
+      background: var(--surface-2);
+      font-size: 11px;
+      font-weight: 720;
+    }
+
+    .position-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+    }
+
+    .position-row strong {
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .position-row small {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .position-row .pnl {
+      text-align: right;
+      font-weight: 760;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .heatmap {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      padding: 12px;
+    }
+
+    .heat-tile {
+      min-height: 58px;
+      padding: 9px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      overflow: hidden;
+    }
+
+    .heat-tile strong {
+      display: block;
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .heat-tile span {
+      display: block;
+      margin-top: 6px;
+      font-weight: 760;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .heat-tile.up {
+      background: color-mix(in srgb, var(--rise) 12%, var(--surface));
+      border-color: color-mix(in srgb, var(--rise) 22%, var(--line));
+    }
+
+    .heat-tile.down {
+      background: color-mix(in srgb, var(--fall) 12%, var(--surface));
+      border-color: color-mix(in srgb, var(--fall) 22%, var(--line));
+    }
+
+    .mobile-only {
+      display: none;
+    }
+
+    @media (max-width: 1280px) {
+      .terminal {
+        --sidebar-w: 220px;
+        --right-w: 300px;
+        grid-template-columns: var(--sidebar-w) minmax(580px, 1fr) var(--right-w);
+      }
+
+      .stat-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .market-head,
+      .workspace-grid,
+      .below-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .risk-tile {
+        width: auto;
+      }
+    }
+
+    @media (max-width: 980px) {
+      .terminal {
+        display: block;
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+        min-height: auto;
+        position: relative;
+      }
+
+      .brand,
+      .top-center,
+      .top-actions {
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        min-height: 54px;
+      }
+
+      .top-center {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 10px 14px;
+      }
+
+      .search {
+        width: 100%;
+      }
+
+      .ticker-tape {
+        width: 100%;
+      }
+
+      .sidebar,
+      .rightbar {
+        min-height: 0;
+        border: 0;
+      }
+
+      .sidebar {
+        border-bottom: 1px solid var(--line);
+      }
+
+      .watch-nav,
+      .watchlist {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .rightbar {
+        border-top: 1px solid var(--line);
+      }
+
+      .chart-area {
+        min-height: 330px;
+        height: 44vh;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .watch-nav,
+      .watchlist,
+      .stat-grid,
+      .flow-panel,
+      .field-grid,
+      .heatmap {
+        grid-template-columns: 1fr;
+      }
+
+      .instrument-main,
+      .quote-block {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .module-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .module-actions {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+<body data-terminal="light">
+  <svg width="0" height="0" style="position:absolute">
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></symbol>
+    <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="18" rx="1"></rect><rect x="14" y="3" width="7" height="8" rx="1"></rect><rect x="14" y="15" width="7" height="6" rx="1"></rect></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 7 7 0 1 0 20.5 14.5Z"></path></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.1 6.6"></path><path d="M3 12A9 9 0 0 1 18.1 5.4"></path><path d="M3 17v4h4"></path><path d="M21 7V3h-4"></path></symbol>
+  </svg>
+
+  <div class="terminal">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <strong>AStock Terminal</strong>
+          <span>交易 / 风控 / 研究一体台</span>
+        </div>
+      </div>
+
+      <div class="top-center">
+        <label class="search" aria-label="搜索证券">
+          <svg class="icon"><use href="#i-search"></use></svg>
+          <input value="" placeholder="搜索代码、板块、策略或新闻" />
+        </label>
+        <div class="ticker-tape" aria-label="市场快照">
+          <span class="ticker"><b>上证</b><span class="positive">+0.84%</span></span>
+          <span class="ticker"><b>深成指</b><span class="positive">+1.16%</span></span>
+          <span class="ticker"><b>创业板</b><span class="negative">-0.22%</span></span>
+          <span class="ticker"><b>北向净流入</b><span class="positive">42.8亿</span></span>
+          <span class="ticker"><b>成交额</b><span>9,864亿</span></span>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <div class="segmented" aria-label="主题切换">
+          <button class="active" data-theme-btn="light" title="浅色终端"><svg class="icon"><use href="#i-sun"></use></svg>浅色</button>
+          <button data-theme-btn="dark" title="深色终端"><svg class="icon"><use href="#i-moon"></use></svg>深色</button>
+        </div>
+        <button class="icon-btn" title="刷新行情"><svg class="icon"><use href="#i-refresh"></use></svg></button>
+        <button class="icon-btn" title="提醒中心"><svg class="icon"><use href="#i-bell"></use></svg></button>
+        <button class="icon-btn" title="布局管理"><svg class="icon"><use href="#i-layout"></use></svg></button>
+      </div>
+    </header>
+
+    <aside class="sidebar">
+      <div class="section-label">Workspace</div>
+      <nav class="watch-nav">
+        <button class="nav-item active"><span class="dot"></span><strong>盘中交易</strong><span>Live</span></button>
+        <button class="nav-item"><span class="dot" style="background:var(--accent-2)"></span><strong>强势股池</strong><span>38</span></button>
+        <button class="nav-item"><span class="dot" style="background:var(--warn)"></span><strong>风控雷达</strong><span>6</span></button>
+        <button class="nav-item"><span class="dot" style="background:var(--fall)"></span><strong>复盘研究</strong><span>12</span></button>
+      </nav>
+
+      <div class="section-label">Watchlist</div>
+      <div class="watchlist">
+        <button class="symbol-row active">
+          <span><strong>002281 光迅科技</strong><small>CPO / 光通信</small></span>
+          <span class="symbol-price positive">+6.38%</span>
+        </button>
+        <button class="symbol-row">
+          <span><strong>688008 澜起科技</strong><small>半导体 / 存储</small></span>
+          <span class="symbol-price positive">+3.12%</span>
+        </button>
+        <button class="symbol-row">
+          <span><strong>601872 招商轮船</strong><small>航运 / 油运</small></span>
+          <span class="symbol-price negative">-1.06%</span>
+        </button>
+        <button class="symbol-row">
+          <span><strong>300308 中际旭创</strong><small>AI / 算力</small></span>
+          <span class="symbol-price positive">+4.91%</span>
+        </button>
+        <button class="symbol-row">
+          <span><strong>510300 沪深300ETF</strong><small>宽基 / 对冲</small></span>
+          <span class="symbol-price neutral">+0.18%</span>
+        </button>
+      </div>
+
+      <div class="mini-meter">
+        <div class="meter-top"><span>账户风险预算</span><strong>68%</strong></div>
+        <div class="meter-track"><div class="meter-fill"></div></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="market-head">
+        <div class="instrument">
+          <div class="instrument-main">
+            <div class="market-title">
+              <strong>002281 光迅科技</strong>
+              <span>深圳 A 股 · CPO 光通信 · 连续放量突破监控</span>
+            </div>
+            <div class="quote-block">
+              <div class="quote-price">42.86</div>
+              <div class="quote-change">+2.57 / +6.38%</div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat"><span>成交额</span><strong>36.82亿</strong></div>
+            <div class="stat"><span>量比</span><strong>2.84</strong></div>
+            <div class="stat"><span>换手</span><strong>9.62%</strong></div>
+            <div class="stat"><span>主力净流入</span><strong class="positive">4.18亿</strong></div>
+            <div class="stat"><span>VWAP</span><strong>41.72</strong></div>
+            <div class="stat"><span>压力 / 支撑</span><strong>44.20 / 39.80</strong></div>
+          </div>
+        </div>
+
+        <div class="risk-tile">
+          <div class="module-title">
+            <strong>实时执行评分</strong>
+            <span>趋势、流动性、滑点与波动综合</span>
+          </div>
+          <div class="risk-score">
+            <strong>82</strong>
+            <span>可交易<br />仓位上限 18%</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-grid">
+        <div class="module">
+          <div class="module-head">
+            <div class="module-title">
+              <strong>分时 / K 线 / 成交量</strong>
+              <span>MA20 42.10 · MA60 38.42 · 当前价位高于 VWAP</span>
+            </div>
+            <div class="module-actions">
+              <button class="tab-btn active">1D</button>
+              <button class="tab-btn">5D</button>
+              <button class="tab-btn">30m</button>
+              <button class="tab-btn">日K</button>
+            </div>
+          </div>
+          <div class="chart-area">
+            <canvas id="priceChart" aria-label="价格图表"></canvas>
+            <div class="chart-badges">
+              <span class="badge">突破位 40.90</span>
+              <span class="badge">止损线 39.80</span>
+              <span class="badge">主动买盘 57%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="module">
+          <div class="module-head">
+            <div class="module-title">
+              <strong>五档盘口</strong>
+              <span>买卖压差 0.04 · 委比 +21.5%</span>
+            </div>
+          </div>
+          <div class="depth">
+            <div class="depth-row" style="--w:72%;--depth-color:var(--rise)"><span>卖五</span><span class="positive">42.95</span><strong>5,820</strong></div>
+            <div class="depth-row" style="--w:44%;--depth-color:var(--rise)"><span>卖四</span><span class="positive">42.94</span><strong>3,610</strong></div>
+            <div class="depth-row" style="--w:61%;--depth-color:var(--rise)"><span>卖三</span><span class="positive">42.93</span><strong>4,970</strong></div>
+            <div class="depth-row" style="--w:33%;--depth-color:var(--rise)"><span>卖二</span><span class="positive">42.92</span><strong>2,690</strong></div>
+            <div class="depth-row" style="--w:38%;--depth-color:var(--rise)"><span>卖一</span><span class="positive">42.91</span><strong>3,080</strong></div>
+            <div class="depth-row" style="--w:64%;--depth-color:var(--fall)"><span>买一</span><span class="negative">42.87</span><strong>5,240</strong></div>
+            <div class="depth-row" style="--w:87%;--depth-color:var(--fall)"><span>买二</span><span class="negative">42.86</span><strong>7,120</strong></div>
+            <div class="depth-row" style="--w:56%;--depth-color:var(--fall)"><span>买三</span><span class="negative">42.85</span><strong>4,620</strong></div>
+            <div class="depth-row" style="--w:35%;--depth-color:var(--fall)"><span>买四</span><span class="negative">42.84</span><strong>2,880</strong></div>
+            <div class="depth-row" style="--w:50%;--depth-color:var(--fall)"><span>买五</span><span class="negative">42.83</span><strong>4,060</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="below-grid">
+        <div class="module">
+          <div class="module-head">
+            <div class="module-title">
+              <strong>资金与成交结构</strong>
+              <span>大单净额、冲击成本、成交分布</span>
+            </div>
+          </div>
+          <div class="flow-panel">
+            <div class="flow-item"><span>超大单净额</span><strong class="positive">+1.72亿</strong></div>
+            <div class="flow-item"><span>大单净额</span><strong class="positive">+0.86亿</strong></div>
+            <div class="flow-item"><span>小单净额</span><strong class="negative">-0.44亿</strong></div>
+            <div class="flow-item"><span>估算滑点</span><strong>0.18%</strong></div>
+          </div>
+        </div>
+
+        <div class="module">
+          <div class="module-head">
+            <div class="module-title">
+              <strong>事件流</strong>
+              <span>公告、研报、异动与舆情</span>
+            </div>
+          </div>
+          <div class="news-list">
+            <div class="news-item"><strong>10:42 光通信板块放量，CPO 概念领涨</strong><span>行业指数 +3.8%，成交额较昨日同期 +46%。</span></div>
+            <div class="news-item"><strong>09:58 主力净流入突破 3 亿</strong><span>分时回踩 VWAP 后出现连续主动买盘。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="below-grid">
+        <div class="module">
+          <div class="module-head">
+            <div class="module-title">
+              <strong>板块热力</strong>
+              <span>适合快速判断资金从哪里来、往哪里去</span>
+            </div>
+          </div>
+          <div class="heatmap">
+            <div class="heat-tile up"><strong>CPO</strong><span class="positive">+5.42%</span></div>
+            <div class="heat-tile up"><strong>PCB</strong><span class="positive">+3.76%</span></div>
+            <div class="heat-tile down"><strong>煤炭</strong><span class="negative">-0.84%</span></div>
+            <div class="heat-tile up"><strong>存储</strong><span class="positive">+2.11%</span></div>
+          </div>
+        </div>
+
+        <div class="module">
+          <div class="module-head">
+            <div class="module-title">
+              <strong>风控提醒</strong>
+              <span>仓位、回撤、价格条件</span>
+            </div>
+          </div>
+          <div class="alert-list">
+            <div class="alert-row"><strong>价格接近第一止盈位 44.20</strong><span>到达后建议减仓 25% 或移动止损。</span></div>
+            <div class="alert-row"><strong>单票敞口已达账户 14.6%</strong><span>距离设定上限 18% 仍有 3.4pct。</span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="rightbar">
+      <section class="ticket">
+        <div class="ticket-head">
+          <div>
+            <strong>快速下单</strong>
+            <span>模拟单 · 限价策略</span>
+          </div>
+          <span class="badge">T+1</span>
+        </div>
+        <div class="ticket-form">
+          <div class="field">
+            <label for="symbol">证券代码</label>
+            <input id="symbol" value="002281" />
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="price">委托价格</label>
+              <input id="price" value="42.88" />
+            </div>
+            <div class="field">
+              <label for="amount">数量</label>
+              <input id="amount" value="1200" />
+            </div>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="orderType">订单类型</label>
+              <select id="orderType">
+                <option>限价单</option>
+                <option>条件单</option>
+                <option>冰山单</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="risk">仓位比例</label>
+              <input id="risk" value="5.2%" />
+            </div>
+          </div>
+          <div class="quick-tags">
+            <button>25%</button>
+            <button>50%</button>
+            <button>75%</button>
+            <button>100%</button>
+          </div>
+          <div class="trade-actions">
+            <button class="trade-btn buy">买入</button>
+            <button class="trade-btn sell">卖出</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="ticket">
+        <div class="ticket-head">
+          <div>
+            <strong>持仓</strong>
+            <span>当日盈亏 +18,420</span>
+          </div>
+        </div>
+        <div class="position-list">
+          <div class="position-row">
+            <span><strong>光迅科技</strong><small>12,000 股 · 成本 39.42</small></span>
+            <span class="pnl positive">+8.73%</span>
+          </div>
+          <div class="position-row">
+            <span><strong>澜起科技</strong><small>4,400 股 · 成本 82.30</small></span>
+            <span class="pnl positive">+3.20%</span>
+          </div>
+          <div class="position-row">
+            <span><strong>招商轮船</strong><small>22,000 股 · 成本 7.18</small></span>
+            <span class="pnl negative">-1.48%</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="ticket">
+        <div class="ticket-head">
+          <div>
+            <strong>策略信号</strong>
+            <span>多因子评分与执行建议</span>
+          </div>
+        </div>
+        <div class="alert-list">
+          <div class="alert-row"><strong>动量延续</strong><span>评分 91，量价结构仍支持持有。</span></div>
+          <div class="alert-row"><strong>追高风险</strong><span>15 分钟 RSI 已进入 76 区间。</span></div>
+          <div class="alert-row"><strong>流动性良好</strong><span>百万级订单预计冲击成本 0.18%。</span></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <script>
+    const root = document.body;
+    const themeButtons = document.querySelectorAll("[data-theme-btn]");
+    const canvas = document.getElementById("priceChart");
+    const ctx = canvas.getContext("2d");
+
+    function getCss(name) {
+      return getComputedStyle(root).getPropertyValue(name).trim();
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+      canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      drawChart();
+    }
+
+    function buildSeries(count) {
+      const series = [];
+      let value = 38.8;
+      for (let i = 0; i < count; i += 1) {
+        const drift = i > count * 0.42 ? 0.075 : 0.018;
+        const wave = Math.sin(i / 5.2) * 0.16 + Math.cos(i / 9.4) * 0.09;
+        const open = value;
+        const close = value + wave + drift + (i % 7 === 0 ? -0.18 : 0.06);
+        const high = Math.max(open, close) + 0.18 + (i % 9) * 0.012;
+        const low = Math.min(open, close) - 0.16 - (i % 5) * 0.014;
+        const volume = 38 + Math.abs(close - open) * 120 + (i > count * 0.42 ? 34 : 0) + (i % 11) * 2;
+        series.push({ open, close, high, low, volume });
+        value = close;
+      }
+      return series;
+    }
+
+    const series = buildSeries(86);
+
+    function drawChart() {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      if (!width || !height) return;
+
+      const surface = getCss("--surface");
+      const grid = getCss("--chart-grid");
+      const ink = getCss("--ink");
+      const muted = getCss("--muted");
+      const rise = getCss("--rise");
+      const fall = getCss("--fall");
+      const accent = getCss("--accent");
+      const accent2 = getCss("--accent-2");
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = surface;
+      ctx.fillRect(0, 0, width, height);
+
+      const pad = { top: 34, right: 58, bottom: 74, left: 46 };
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const volH = 48;
+      const priceH = plotH - volH - 18;
+      const highs = series.map((d) => d.high);
+      const lows = series.map((d) => d.low);
+      const min = Math.min(...lows) - 0.45;
+      const max = Math.max(...highs) + 0.45;
+      const maxVol = Math.max(...series.map((d) => d.volume));
+
+      ctx.strokeStyle = grid;
+      ctx.lineWidth = 1;
+      ctx.font = "11px Inter, sans-serif";
+      ctx.fillStyle = muted;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+
+      for (let i = 0; i <= 5; i += 1) {
+        const y = pad.top + (priceH / 5) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(width - pad.right, y);
+        ctx.stroke();
+        const label = (max - ((max - min) / 5) * i).toFixed(2);
+        ctx.fillText(label, width - 10, y);
+      }
+
+      for (let i = 0; i <= 6; i += 1) {
+        const x = pad.left + (plotW / 6) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, pad.top);
+        ctx.lineTo(x, height - pad.bottom + 12);
+        ctx.stroke();
+      }
+
+      const xStep = plotW / series.length;
+      const candleW = Math.max(4, Math.min(10, xStep * 0.58));
+      const yPrice = (v) => pad.top + ((max - v) / (max - min)) * priceH;
+      const yVolBase = pad.top + priceH + 18 + volH;
+
+      series.forEach((d, i) => {
+        const x = pad.left + i * xStep + xStep / 2;
+        const up = d.close >= d.open;
+        const color = up ? rise : fall;
+        const openY = yPrice(d.open);
+        const closeY = yPrice(d.close);
+        const highY = yPrice(d.high);
+        const lowY = yPrice(d.low);
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.stroke();
+        const bodyY = Math.min(openY, closeY);
+        const bodyH = Math.max(2, Math.abs(closeY - openY));
+        if (up) {
+          ctx.fillRect(x - candleW / 2, bodyY, candleW, bodyH);
+        } else {
+          ctx.strokeRect(x - candleW / 2, bodyY, candleW, bodyH);
+        }
+
+        const vh = (d.volume / maxVol) * volH;
+        ctx.globalAlpha = 0.32;
+        ctx.fillRect(x - candleW / 2, yVolBase - vh, candleW, vh);
+        ctx.globalAlpha = 1;
+      });
+
+      const ma = (period) => series.map((_, idx) => {
+        const start = Math.max(0, idx - period + 1);
+        const slice = series.slice(start, idx + 1);
+        return slice.reduce((sum, d) => sum + d.close, 0) / slice.length;
+      });
+
+      function drawLine(values, color, widthLine) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = widthLine;
+        ctx.beginPath();
+        values.forEach((v, i) => {
+          const x = pad.left + i * xStep + xStep / 2;
+          const y = yPrice(v);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      drawLine(ma(8), accent, 1.8);
+      drawLine(ma(21), accent2, 1.6);
+
+      const last = series[series.length - 1].close;
+      const yLast = yPrice(last);
+      ctx.strokeStyle = rise;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(pad.left, yLast);
+      ctx.lineTo(width - pad.right, yLast);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = rise;
+      ctx.fillRect(width - pad.right + 6, yLast - 12, 46, 24);
+      ctx.fillStyle = "#fff";
+      ctx.font = "700 11px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(last.toFixed(2), width - pad.right + 29, yLast);
+
+      ctx.fillStyle = ink;
+      ctx.textAlign = "left";
+      ctx.font = "760 12px Inter, sans-serif";
+      ctx.fillText("MA8", pad.left, 18);
+      ctx.fillStyle = accent;
+      ctx.fillText("42.24", pad.left + 34, 18);
+      ctx.fillStyle = ink;
+      ctx.fillText("MA21", pad.left + 92, 18);
+      ctx.fillStyle = accent2;
+      ctx.fillText("40.86", pad.left + 136, 18);
+
+      ctx.fillStyle = muted;
+      ctx.textAlign = "center";
+      ctx.font = "11px Inter, sans-serif";
+      ["09:30", "10:30", "11:30", "13:30", "14:30"].forEach((label, i) => {
+        const x = pad.left + (plotW / 4) * i;
+        ctx.fillText(label, x, height - 28);
+      });
+    }
+
+    themeButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const theme = button.dataset.themeBtn;
+        root.dataset.terminal = theme;
+        themeButtons.forEach((btn) => btn.classList.toggle("active", btn === button));
+        requestAnimationFrame(drawChart);
+      });
+    });
+
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+  </script>
+</body>
+</html>

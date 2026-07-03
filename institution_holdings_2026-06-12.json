@@ -1,0 +1,11 @@
+{
+  "tradeDate": "2026-06-12",
+  "source": "天天基金 pingzhongdata / 腾讯行情名称映射",
+  "ifindProbe": {
+    "supportsFundQuotes": false,
+    "supportsFundHoldings": false,
+    "notes": "未提供 iFinD access token，本页基金数据改走公开源。",
+    "samples": []
+  },
+  "rows": []
+}

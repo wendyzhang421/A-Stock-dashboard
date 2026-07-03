@@ -1,0 +1,521 @@
+{
+  "tradeDate": "2026-06-05",
+  "source": "天天基金 pingzhongdata / 腾讯行情名称映射",
+  "ifindProbe": {
+    "supportsFundQuotes": true,
+    "supportsFundHoldings": false,
+    "notes": "iFinD QuantAPI 已验证支持 .OF 基金行情历史；但当前未找到可直接返回前十大重仓股的现成 QuantAPI 持仓接口，机构持仓页改用天天基金公开披露数据。",
+    "samples": [
+      {
+        "code": "161725.OF",
+        "lastDate": "2026-06-05"
+      },
+      {
+        "code": "159915.OF",
+        "lastDate": "2026-06-05"
+      },
+      {
+        "code": "588000.OF",
+        "lastDate": "2026-06-05"
+      }
+    ]
+  },
+  "rows": [
+    {
+      "fundCode": "510300",
+      "fundName": "沪深300ETF华泰柏瑞",
+      "fundScaleYi": 1999.14,
+      "scaleChange": "-52.66%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 27.53,
+      "recent6mReturn": 5.76,
+      "recent3mReturn": 3.97,
+      "recent1mReturn": 0.4,
+      "institutionHolderRatio": 90.27,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 97.76,
+      "assetReportDate": "2026-03-31",
+      "managerName": "柳军",
+      "managerWorkTime": "17年又5天",
+      "managerFundSize": "3388.01亿(31只基金)",
+      "managerTenureReturn": 129.7696,
+      "managerNavDate": "2026-06-04",
+      "topHoldings": [
+        {
+          "name": "宁德时代",
+          "code": "300750.SZ"
+        },
+        {
+          "name": "贵州茅台",
+          "code": "600519.SH"
+        },
+        {
+          "name": "中际旭创",
+          "code": "300308.SZ"
+        },
+        {
+          "name": "中国平安",
+          "code": "601318.SH"
+        },
+        {
+          "name": "紫金矿业",
+          "code": "601899.SH"
+        },
+        {
+          "name": "招商银行",
+          "code": "600036.SH"
+        },
+        {
+          "name": "新易盛",
+          "code": "300502.SZ"
+        },
+        {
+          "name": "美的集团",
+          "code": "000333.SZ"
+        },
+        {
+          "name": "长江电力",
+          "code": "600900.SH"
+        },
+        {
+          "name": "兴业银行",
+          "code": "601166.SH"
+        }
+      ]
+    },
+    {
+      "fundCode": "588000",
+      "fundName": "科创50ETF华夏",
+      "fundScaleYi": 685.48,
+      "scaleChange": "-9.83%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 68.18,
+      "recent6mReturn": 26.3,
+      "recent3mReturn": 18.78,
+      "recent1mReturn": 6.31,
+      "institutionHolderRatio": 21.79,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.57,
+      "assetReportDate": "2026-03-31",
+      "managerName": "荣膺",
+      "managerWorkTime": "10年又214天",
+      "managerFundSize": "1397.82亿(33只基金)",
+      "managerTenureReturn": 27.3408,
+      "managerNavDate": "2026-06-04",
+      "topHoldings": [
+        {
+          "name": "寒武纪",
+          "code": "688256.SH"
+        },
+        {
+          "name": "海光信息",
+          "code": "688041.SH"
+        },
+        {
+          "name": "中芯国际",
+          "code": "688981.SH"
+        },
+        {
+          "name": "澜起科技",
+          "code": "688008.SH"
+        },
+        {
+          "name": "中微公司",
+          "code": "688012.SH"
+        },
+        {
+          "name": "芯原股份",
+          "code": "688521.SH"
+        },
+        {
+          "name": "佰维存储",
+          "code": "688525.SH"
+        },
+        {
+          "name": "拓荆科技",
+          "code": "688072.SH"
+        },
+        {
+          "name": "联影医疗",
+          "code": "688271.SH"
+        },
+        {
+          "name": "金山办公",
+          "code": "688111.SH"
+        }
+      ]
+    },
+    {
+      "fundCode": "159915",
+      "fundName": "创业板ETF易方达",
+      "fundScaleYi": 510.3,
+      "scaleChange": "-49.20%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 96.27,
+      "recent6mReturn": 28.56,
+      "recent3mReturn": 23.85,
+      "recent1mReturn": 7.77,
+      "institutionHolderRatio": 78.83,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.79,
+      "assetReportDate": "2026-03-31",
+      "managerName": "成曦",
+      "managerWorkTime": "10年又31天",
+      "managerFundSize": "1660.26亿(28只基金)",
+      "managerTenureReturn": 102.207,
+      "managerNavDate": "2026-06-04",
+      "topHoldings": [
+        {
+          "name": "宁德时代",
+          "code": "300750.SZ"
+        },
+        {
+          "name": "中际旭创",
+          "code": "300308.SZ"
+        },
+        {
+          "name": "新易盛",
+          "code": "300502.SZ"
+        },
+        {
+          "name": "东方财富",
+          "code": "300059.SZ"
+        },
+        {
+          "name": "阳光电源",
+          "code": "300274.SZ"
+        },
+        {
+          "name": "胜宏科技",
+          "code": "300476.SZ"
+        },
+        {
+          "name": "天孚通信",
+          "code": "300394.SZ"
+        },
+        {
+          "name": "汇川技术",
+          "code": "300124.SZ"
+        },
+        {
+          "name": "迈瑞医疗",
+          "code": "300760.SZ"
+        },
+        {
+          "name": "温氏股份",
+          "code": "300498.SZ"
+        }
+      ]
+    },
+    {
+      "fundCode": "512170",
+      "fundName": "医疗ETF华宝",
+      "fundScaleYi": 279.96,
+      "scaleChange": "10.82%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": -10.0,
+      "recent6mReturn": -12.87,
+      "recent3mReturn": -10.43,
+      "recent1mReturn": -10.64,
+      "institutionHolderRatio": 32.95,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.08,
+      "assetReportDate": "2026-03-31",
+      "managerName": "张放",
+      "managerWorkTime": "5年又128天",
+      "managerFundSize": "391.40亿(20只基金)",
+      "managerTenureReturn": -16.5416,
+      "managerNavDate": "2026-06-05",
+      "topHoldings": [
+        {
+          "name": "药明康德",
+          "code": "603259.SH"
+        },
+        {
+          "name": "迈瑞医疗",
+          "code": "300760.SZ"
+        },
+        {
+          "name": "联影医疗",
+          "code": "688271.SH"
+        },
+        {
+          "name": "爱尔眼科",
+          "code": "300015.SZ"
+        },
+        {
+          "name": "康龙化成",
+          "code": "300759.SZ"
+        },
+        {
+          "name": "泰格医药",
+          "code": "300347.SZ"
+        },
+        {
+          "name": "英科医疗",
+          "code": "300677.SZ"
+        },
+        {
+          "name": "九安医疗",
+          "code": "002432.SZ"
+        },
+        {
+          "name": "凯莱英",
+          "code": "002821.SZ"
+        },
+        {
+          "name": "鱼跃医疗",
+          "code": "002223.SZ"
+        }
+      ]
+    },
+    {
+      "fundCode": "159995",
+      "fundName": "芯片ETF华夏",
+      "fundScaleYi": 229.03,
+      "scaleChange": "-9.11%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 98.8,
+      "recent6mReturn": 42.81,
+      "recent3mReturn": 29.36,
+      "recent1mReturn": 15.63,
+      "institutionHolderRatio": 10.33,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.9,
+      "assetReportDate": "2026-03-31",
+      "managerName": "赵宗庭",
+      "managerWorkTime": "9年又51天",
+      "managerFundSize": "1722.70亿(30只基金)",
+      "managerTenureReturn": 152.84,
+      "managerNavDate": "2026-06-04",
+      "topHoldings": [
+        {
+          "name": "海光信息",
+          "code": "688041.SH"
+        },
+        {
+          "name": "北方华创",
+          "code": "002371.SZ"
+        },
+        {
+          "name": "中芯国际",
+          "code": "688981.SH"
+        },
+        {
+          "name": "兆易创新",
+          "code": "603986.SH"
+        },
+        {
+          "name": "寒武纪",
+          "code": "688256.SH"
+        },
+        {
+          "name": "中微公司",
+          "code": "688012.SH"
+        },
+        {
+          "name": "澜起科技",
+          "code": "688008.SH"
+        },
+        {
+          "name": "豪威集团",
+          "code": "603501.SH"
+        },
+        {
+          "name": "芯原股份",
+          "code": "688521.SH"
+        },
+        {
+          "name": "拓荆科技",
+          "code": "688072.SH"
+        }
+      ]
+    },
+    {
+      "fundCode": "512480",
+      "fundName": "半导体ETF国联安",
+      "fundScaleYi": 199.06,
+      "scaleChange": "-1.28%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 103.6,
+      "recent6mReturn": 48.7,
+      "recent3mReturn": 31.85,
+      "recent1mReturn": 15.08,
+      "institutionHolderRatio": 32.09,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.57,
+      "assetReportDate": "2026-03-31",
+      "managerName": "黄欣",
+      "managerWorkTime": "16年又54天",
+      "managerFundSize": "337.99亿(22只基金)",
+      "managerTenureReturn": 338.68,
+      "managerNavDate": "2026-06-04",
+      "topHoldings": [
+        {
+          "name": "寒武纪",
+          "code": "688256.SH"
+        },
+        {
+          "name": "海光信息",
+          "code": "688041.SH"
+        },
+        {
+          "name": "北方华创",
+          "code": "002371.SZ"
+        },
+        {
+          "name": "中芯国际",
+          "code": "688981.SH"
+        },
+        {
+          "name": "兆易创新",
+          "code": "603986.SH"
+        },
+        {
+          "name": "澜起科技",
+          "code": "688008.SH"
+        },
+        {
+          "name": "中微公司",
+          "code": "688012.SH"
+        },
+        {
+          "name": "豪威集团",
+          "code": "603501.SH"
+        },
+        {
+          "name": "芯原股份",
+          "code": "688521.SH"
+        },
+        {
+          "name": "佰维存储",
+          "code": "688525.SH"
+        }
+      ]
+    },
+    {
+      "fundCode": "515790",
+      "fundName": "光伏ETF华泰柏瑞",
+      "fundScaleYi": 106.51,
+      "scaleChange": "-5.34%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 60.68,
+      "recent6mReturn": 9.15,
+      "recent3mReturn": -7.34,
+      "recent1mReturn": -2.02,
+      "institutionHolderRatio": 41.3,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 98.83,
+      "assetReportDate": "2026-03-31",
+      "managerName": "李茜",
+      "managerWorkTime": "6年又214天",
+      "managerFundSize": "495.11亿(28只基金)",
+      "managerTenureReturn": 6.66,
+      "managerNavDate": "2026-06-04",
+      "topHoldings": [
+        {
+          "name": "特变电工",
+          "code": "600089.SH"
+        },
+        {
+          "name": "隆基绿能",
+          "code": "601012.SH"
+        },
+        {
+          "name": "阳光电源",
+          "code": "300274.SZ"
+        },
+        {
+          "name": "TCL科技",
+          "code": "000100.SZ"
+        },
+        {
+          "name": "德业股份",
+          "code": "605117.SH"
+        },
+        {
+          "name": "通威股份",
+          "code": "600438.SH"
+        },
+        {
+          "name": "迈为股份",
+          "code": "300751.SZ"
+        },
+        {
+          "name": "罗博特科",
+          "code": "300757.SZ"
+        },
+        {
+          "name": "XD正泰电",
+          "code": "601877.SH"
+        },
+        {
+          "name": "TCL中环",
+          "code": "002129.SZ"
+        }
+      ]
+    },
+    {
+      "fundCode": "512660",
+      "fundName": "军工ETF国泰",
+      "fundScaleYi": 94.08,
+      "scaleChange": "-11.67%",
+      "scaleReportDate": "2026-03-31",
+      "recent1yReturn": 21.28,
+      "recent6mReturn": 5.84,
+      "recent3mReturn": -15.46,
+      "recent1mReturn": -8.91,
+      "institutionHolderRatio": 58.08,
+      "holderReportDate": "2025-12-31",
+      "stockAllocationRatio": 99.73,
+      "assetReportDate": "2026-03-31",
+      "managerName": "艾小军",
+      "managerWorkTime": "12年又146天",
+      "managerFundSize": "2109.33亿(28只基金)",
+      "managerTenureReturn": 27.83,
+      "managerNavDate": "2026-06-04",
+      "topHoldings": [
+        {
+          "name": "中国船舶",
+          "code": "600150.SH"
+        },
+        {
+          "name": "航发动力",
+          "code": "600893.SH"
+        },
+        {
+          "name": "航天电子",
+          "code": "600879.SH"
+        },
+        {
+          "name": "光启技术",
+          "code": "002625.SZ"
+        },
+        {
+          "name": "中国卫星",
+          "code": "600118.SH"
+        },
+        {
+          "name": "中航光电",
+          "code": "002179.SZ"
+        },
+        {
+          "name": "中航沈飞",
+          "code": "600760.SH"
+        },
+        {
+          "name": "菲利华",
+          "code": "300395.SZ"
+        },
+        {
+          "name": "睿创微纳",
+          "code": "688002.SH"
+        },
+        {
+          "name": "航天发展",
+          "code": "000547.SZ"
+        }
+      ]
+    }
+  ]
+}
