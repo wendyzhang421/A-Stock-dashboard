@@ -2066,6 +2066,66 @@ def resolve_main_business(
     return "-"
 
 
+def has_business_segment_items(payload: dict[str, object] | None) -> bool:
+    return isinstance(payload, dict) and bool(payload.get("items"))
+
+
+def latest_news_text(row: dict) -> str:
+    latest_news = row.get("latestNews") or {}
+    return " ".join(
+        [
+            str(latest_news.get("title") or ""),
+            str(latest_news.get("summary") or ""),
+        ]
+    )
+
+
+def resolve_row_main_business(row: dict, *, allow_live_lookup: bool = False) -> dict:
+    code = str(row.get("code") or "").strip()
+    if not code:
+        return row
+
+    historical = load_historical_report_row(code) or {}
+    if not normalize_main_business_value(row.get("industry")) and normalize_main_business_value(historical.get("industry")):
+        row["industry"] = historical.get("industry") or ""
+    if (
+        allow_live_lookup
+        and not normalize_main_business_value(row.get("industry"))
+    ):
+        try:
+            row["industry"] = fetch_industry(code) or row.get("industry") or ""
+        except Exception:
+            row["industry"] = row.get("industry") or ""
+
+    segments = row.get("businessSegments") or {}
+    historical_segments = historical.get("businessSegments") if historical else None
+    if not has_business_segment_items(segments) and has_business_segment_items(historical_segments):
+        segments = historical_segments
+        row["businessSegments"] = segments
+    if (
+        allow_live_lookup
+        and not normalize_main_business_value(row.get("mainBusiness"))
+        and not has_business_segment_items(segments)
+    ):
+        try:
+            live_segments = fetch_top3_business_segments(code)
+            if has_business_segment_items(live_segments):
+                segments = live_segments
+                row["businessSegments"] = segments
+        except Exception:
+            pass
+
+    row["mainBusiness"] = resolve_main_business(
+        code,
+        name=row.get("name"),
+        industry=row.get("industry"),
+        existing=row.get("mainBusiness"),
+        business_segments=segments if isinstance(segments, dict) else None,
+        news_text=latest_news_text(row),
+    )
+    return row
+
+
 def clean_news_title(title: str) -> str:
     return re.sub(r"\s+", " ", str(title or "")).strip().replace("｜", "-").replace("|", "-").replace("_", "-")
 
@@ -2195,6 +2255,7 @@ def finalize_strong_stocks(rows: list[dict], watch_codes: set[str] | None = None
     if research_codes is None:
         research_codes = load_research_target_codes()
     for row in filtered:
+        resolve_row_main_business(row, allow_live_lookup=False)
         row["strongScore"] = score_strong_stock(row, watch_codes, research_codes)
     filtered.sort(
         key=lambda row: (
@@ -9004,21 +9065,8 @@ def hydrate_cached_dataset(dataset: list[dict]) -> list[dict]:
 def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
     for item in rows:
         code = item.get("code", "")
-        industry = item.get("industry") or fetch_industry(code) or ""
         latest_news = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
-        item["mainBusiness"] = resolve_main_business(
-            code,
-            name=item.get("name"),
-            industry=industry,
-            existing=item.get("mainBusiness", ""),
-            business_segments=item.get("businessSegments"),
-            news_text=" ".join(
-                [
-                    latest_news.get("title", ""),
-                    latest_news.get("summary", ""),
-                ]
-            ),
-        )
+        item["industry"] = item.get("industry") or ""
         item["latestNews"] = latest_news
         item["research"] = build_research_payload(code, item.get("research", {}))
         item["peRatio"] = item.get("peRatio")
@@ -9034,42 +9082,13 @@ def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
         item["topCustomers"] = item.get("topCustomers") or {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []}
         item["kline"] = item.get("kline") or []
         item["last5"] = item.get("last5") or []
+        resolve_row_main_business(item, allow_live_lookup=TRUST_ENV)
     return rows
 
 
 def strengthen_main_business_for_rows(rows: list[dict]) -> list[dict]:
     for item in rows:
-        code = str(item.get("code") or "").strip()
-        if not code:
-            continue
-        latest_news = item.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
-        if TRUST_ENV and not normalize_main_business_value(item.get("industry")):
-            try:
-                item["industry"] = fetch_industry(code) or item.get("industry") or ""
-            except Exception:
-                item["industry"] = item.get("industry") or ""
-        if TRUST_ENV and not normalize_main_business_value(item.get("mainBusiness")):
-            segments = item.get("businessSegments") or {}
-            if not (isinstance(segments, dict) and segments.get("items")):
-                try:
-                    segments = fetch_top3_business_segments(code)
-                    if segments.get("items"):
-                        item["businessSegments"] = segments
-                except Exception:
-                    pass
-        item["mainBusiness"] = resolve_main_business(
-            code,
-            name=item.get("name"),
-            industry=item.get("industry"),
-            existing=item.get("mainBusiness"),
-            business_segments=item.get("businessSegments"),
-            news_text=" ".join(
-                [
-                    str(latest_news.get("title") or ""),
-                    str(latest_news.get("summary") or ""),
-                ]
-            ),
-        )
+        resolve_row_main_business(item, allow_live_lookup=True)
     return rows
 
 

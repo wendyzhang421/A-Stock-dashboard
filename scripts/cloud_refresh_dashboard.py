@@ -117,14 +117,7 @@ def patch_watchlist_to_today(access_token: str | None, watch: list[dict], as_of:
 
 def patch_strong_main_business(strong: list[dict]) -> list[dict]:
     for row in strong:
-        if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
-            historical = d.load_historical_report_row(row["code"]) or {}
-            row["mainBusiness"] = (
-                d.MAIN_BUSINESS_MAP.get(row["code"])
-                or historical.get("mainBusiness")
-                or row.get("mainBusiness")
-                or "-"
-            )
+        d.resolve_row_main_business(row, allow_live_lookup=True)
     return strong
 
 
@@ -156,22 +149,11 @@ def patch_main_business_and_news(watch: list[dict], strong: list[dict]) -> tuple
             "isRecent": False,
         }
         row["latestNews"] = latest_news
-        if not row.get("mainBusiness") or row.get("mainBusiness") == "-":
-            news_hint = d.infer_main_business_from_text(
-                " ".join(
-                    [
-                        latest_news.get("title", ""),
-                        latest_news.get("summary", ""),
-                    ]
-                )
-            )
-            row["mainBusiness"] = (
-                d.MAIN_BUSINESS_MAP.get(code)
-                or historical.get("mainBusiness")
-                or row.get("industry")
-                or news_hint
-                or "-"
-            )
+        if not row.get("businessSegments") and historical.get("businessSegments"):
+            row["businessSegments"] = historical.get("businessSegments")
+        if not row.get("industry") and historical.get("industry"):
+            row["industry"] = historical.get("industry")
+        d.resolve_row_main_business(row, allow_live_lookup=True)
     return watch, strong
 
 
