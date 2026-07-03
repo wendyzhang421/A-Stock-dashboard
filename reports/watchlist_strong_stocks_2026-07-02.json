@@ -411,9 +411,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "水乳膏霜",
+          "revenue": 4020225326.79,
+          "ratio": 0.807716
+        },
+        {
+          "name": "面膜",
+          "revenue": 818026429.41,
+          "ratio": 0.164352
+        },
+        {
+          "name": "品牌管理服务",
+          "revenue": 109289943.01,
+          "ratio": 0.021958
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -421,7 +437,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "水乳膏霜/面膜",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -792,9 +808,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "诊断试剂",
+          "revenue": 286838008.79,
+          "ratio": 0.70846
+        },
+        {
+          "name": "诊断仪器",
+          "revenue": 71884849.39,
+          "ratio": 0.177548
+        },
+        {
+          "name": "生物原料及其他",
+          "revenue": 36737298.62,
+          "ratio": 0.090737
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -802,7 +834,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "诊断试剂/诊断仪器",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -1164,9 +1196,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "铋材料销售",
+          "revenue": 1319775889.05,
+          "ratio": 0.712691
+        },
+        {
+          "name": "专用设备制造",
+          "revenue": 348310441.76,
+          "ratio": 0.188091
+        },
+        {
+          "name": "房产销售",
+          "revenue": 124771957.97,
+          "ratio": 0.067378
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -1174,7 +1222,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "铋材料销售/专用设备制造",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -1545,9 +1593,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "功能性原料及保健食品",
+          "revenue": 1857415098.28,
+          "ratio": 0.860839
+        },
+        {
+          "name": "生物制药",
+          "revenue": 256932892.58,
+          "ratio": 0.119078
+        },
+        {
+          "name": "其他(补充)",
+          "revenue": 43332221.84,
+          "ratio": 0.020083
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -1555,7 +1619,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "功能性原料及保健食品/生物制药",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -1917,9 +1981,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "其他",
+          "revenue": 4831098875.94,
+          "ratio": 0.325624
+        },
+        {
+          "name": "甲基叔丁基醚",
+          "revenue": 3615592147.08,
+          "ratio": 0.243697
+        },
+        {
+          "name": "环氧丙烷",
+          "revenue": 3407686138.77,
+          "ratio": 0.229684
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -1927,7 +2007,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "甲基叔丁基醚/环氧丙烷",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -2289,9 +2369,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "氟碳化学品",
+          "revenue": 2772376641.28,
+          "ratio": 0.53252
+        },
+        {
+          "name": "含氟高分子材料",
+          "revenue": 1738137768.6,
+          "ratio": 0.333863
+        },
+        {
+          "name": "化工原料",
+          "revenue": 441008605.9,
+          "ratio": 0.084709
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -2299,7 +2395,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "氟碳化学品/含氟高分子材料",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -2670,9 +2766,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "鸡收入",
+          "revenue": 2288263825.67,
+          "ratio": 0.775086
+        },
+        {
+          "name": "猪收入",
+          "revenue": 418852073.97,
+          "ratio": 0.141875
+        },
+        {
+          "name": "畜牧设备",
+          "revenue": 167122007.98,
+          "ratio": 0.056608
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -2680,7 +2792,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "鸡收入/猪收入",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -3424,9 +3536,20 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "钕铁硼磁钢",
+          "revenue": 7028083879.51,
+          "ratio": 0.910666
+        },
+        {
+          "name": "其他(补充)",
+          "revenue": 689437835.45,
+          "ratio": 0.089334
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -3434,7 +3557,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "钕铁硼磁钢/其他(补充)",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -3796,9 +3919,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "高纯化学品",
+          "revenue": 928669036.48,
+          "ratio": 0.576881
+        },
+        {
+          "name": "锂电池材料",
+          "revenue": 223417033.59,
+          "ratio": 0.138785
+        },
+        {
+          "name": "光刻胶",
+          "revenue": 223369746.35,
+          "ratio": 0.138755
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -3806,7 +3945,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "高纯化学品/锂电池材料",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -4177,9 +4316,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "创新药",
+          "revenue": 1998579183.05,
+          "ratio": 0.459163
+        },
+        {
+          "name": "其他药物1",
+          "revenue": 1837776029.53,
+          "ratio": 0.422219
+        },
+        {
+          "name": "医疗器械",
+          "revenue": 379939011.56,
+          "ratio": 0.087289
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -4187,7 +4342,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "创新药/其他药物1",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -4549,9 +4704,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "汽车零部件制造业",
+          "revenue": 6076963032.46,
+          "ratio": 0.854944
+        },
+        {
+          "name": "专用装备及模具制造",
+          "revenue": 425438884.66,
+          "ratio": 0.059853
+        },
+        {
+          "name": "医疗服务",
+          "revenue": 261449926.29,
+          "ratio": 0.036782
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -4559,7 +4730,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "汽车零部件制造业/专用装备及模具制造",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -5304,9 +5475,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "大宗气体",
+          "revenue": 790972752.05,
+          "ratio": 0.475334
+        },
+        {
+          "name": "工业级化学品",
+          "revenue": 474633176.82,
+          "ratio": 0.28523
+        },
+        {
+          "name": "清洁能源",
+          "revenue": 234446453.29,
+          "ratio": 0.14089
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -5314,7 +5501,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "大宗气体/工业级化学品",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -5685,9 +5872,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "制动系统类轴承",
+          "revenue": 620213286.59,
+          "ratio": 0.786901
+        },
+        {
+          "name": "传动系统类轴承",
+          "revenue": 101681014.08,
+          "ratio": 0.129009
+        },
+        {
+          "name": "动力系统类轴承",
+          "revenue": 47990938.77,
+          "ratio": 0.060889
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -5695,7 +5898,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "制动系统类轴承/传动系统类轴承",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -6828,9 +7031,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "自主生产产品",
+          "revenue": 3278697714.25,
+          "ratio": 0.747233
+        },
+        {
+          "name": "合作生产产品",
+          "revenue": 1028877857.73,
+          "ratio": 0.234487
+        },
+        {
+          "name": "其他产品(服务)",
+          "revenue": 46595209.67,
+          "ratio": 0.010619
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -6838,7 +7057,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "自主生产产品/合作生产产品",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
@@ -7201,9 +7420,25 @@
       ]
     },
     "businessSegments": {
-      "reportDate": "",
-      "category": "",
-      "items": []
+      "reportDate": "2025-12-31",
+      "category": "按产品分类",
+      "items": [
+        {
+          "name": "清洗类产品",
+          "revenue": 433396438.99,
+          "ratio": 0.45745
+        },
+        {
+          "name": "电机类产品",
+          "revenue": 429953281.92,
+          "ratio": 0.453816
+        },
+        {
+          "name": "其他产品",
+          "revenue": 84067503.39,
+          "ratio": 0.088733
+        }
+      ]
     },
     "topCustomers": {
       "reportDate": "",
@@ -7211,7 +7446,7 @@
       "totalRatio": null,
       "customers": []
     },
-    "mainBusiness": "-",
+    "mainBusiness": "清洗类产品/电机类产品",
     "research": {
       "revenue2025": "",
       "revenueYoY": "",
