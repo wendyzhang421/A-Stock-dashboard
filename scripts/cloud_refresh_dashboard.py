@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -15,12 +16,15 @@ if str(ROOT) not in sys.path:
 
 import build_watchlist_dashboard as d
 
+REFRESH_TIMEOUT_SECONDS = int(os.environ.get("ASTOCK_REFRESH_TIMEOUT_SECONDS", "600"))
+
 
 def run_refresh(script_name: str, as_of: date) -> None:
     subprocess.run(
         [sys.executable, str(ROOT / "scripts" / script_name), as_of.isoformat()],
         cwd=ROOT,
         check=True,
+        timeout=REFRESH_TIMEOUT_SECONDS,
     )
 
 
