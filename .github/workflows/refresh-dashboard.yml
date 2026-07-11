@@ -12,8 +12,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: refresh-dashboard
@@ -32,6 +30,10 @@ jobs:
       XAI_MODEL: ${{ secrets.XAI_MODEL || 'grok-3-mini' }}
       X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
       TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
+      ASTOCK_REFRESH_STEP_TIMEOUT_SECONDS: "3600"
+      ASTOCK_REFRESH_TIMEOUT_SECONDS: "1200"
+      ASTOCK_CLOUD_LIVE_LOOKUPS: "0"
+      ASTOCK_SKIP_LIVE_NEWS: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -72,20 +74,29 @@ jobs:
       - name: Refresh dashboard
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           refresh_date="${{ steps.refresh-date.outputs.value }}"
           if [ -f "reports/watchlist_dashboard_${refresh_date}.html" ] && [ -f "reports/watchlist_strong_stocks_${refresh_date}.json" ]; then
             echo "Using committed reports for ${refresh_date}; skipping live refresh."
             echo "Using committed reports for ${refresh_date}; skipped live refresh." >> "${GITHUB_STEP_SUMMARY}"
           else
             timeout "${ASTOCK_REFRESH_STEP_TIMEOUT_SECONDS:-1200}" python scripts/cloud_refresh_dashboard.py "${refresh_date}"
-            status=$?
-            if [ "${status}" -ne 0 ]; then
-              echo "Cloud refresh failed or timed out; keeping the latest committed reports as deployment fallback."
-              echo "Cloud refresh failed or timed out for ${refresh_date}; deployed fallback reports instead." >> "${GITHUB_STEP_SUMMARY}"
-            fi
           fi
-          exit 0
+          for required in \
+            "reports/watchlist_dashboard_${refresh_date}.html" \
+            "reports/watchlist_dashboard_${refresh_date}.json" \
+            "reports/watchlist_strong_stocks_${refresh_date}.json" \
+            "reports/share_dashboard/index.html"; do
+            if [ ! -s "${required}" ]; then
+              echo "::error::Missing refreshed dashboard output: ${required}"
+              exit 1
+            fi
+          done
+          if ! grep -q "watchlist_dashboard_${refresh_date}.html" reports/share_dashboard/index.html; then
+            echo "::error::share_dashboard/index.html does not point at ${refresh_date}."
+            exit 1
+          fi
+          echo "Dashboard reports are ready for ${refresh_date}." >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Commit refreshed reports
         shell: bash
@@ -104,13 +115,32 @@ jobs:
           git push
           echo "Committed refreshed reports for ${{ steps.refresh-date.outputs.value }}." >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+      - name: Publish reports to gh-pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          refresh_date="${{ steps.refresh-date.outputs.value }}"
+          publish_dir="$(mktemp -d)"
+          git fetch origin gh-pages:refs/remotes/origin/gh-pages
+          git worktree add "${publish_dir}" origin/gh-pages
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: reports
+          cname_value="stockkiller.xyz"
+          if [ -f "${publish_dir}/CNAME" ]; then
+            cname_value="$(cat "${publish_dir}/CNAME")"
+          fi
 
-      - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v4
+          rsync -a --delete --exclude '.git' --exclude '.vercel/' reports/ "${publish_dir}/"
+          printf '%s\n' "${cname_value}" > "${publish_dir}/CNAME"
+
+          cd "${publish_dir}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No gh-pages changes to publish."
+            echo "No gh-pages changes to publish for ${refresh_date}." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          git commit -m "Publish dashboard reports for ${refresh_date}"
+          git push origin HEAD:gh-pages
+          echo "Published dashboard reports for ${refresh_date} to gh-pages." >> "${GITHUB_STEP_SUMMARY}"

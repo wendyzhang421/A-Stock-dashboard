@@ -17,6 +17,18 @@ if str(ROOT) not in sys.path:
 import build_watchlist_dashboard as d
 
 REFRESH_TIMEOUT_SECONDS = int(os.environ.get("ASTOCK_REFRESH_TIMEOUT_SECONDS", "600"))
+ENABLE_LIVE_LOOKUPS = os.environ.get("ASTOCK_CLOUD_LIVE_LOOKUPS", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SKIP_LIVE_NEWS = os.environ.get("ASTOCK_SKIP_LIVE_NEWS", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def run_refresh(script_name: str, as_of: date) -> None:
@@ -121,7 +133,7 @@ def patch_watchlist_to_today(access_token: str | None, watch: list[dict], as_of:
 
 def patch_strong_main_business(strong: list[dict]) -> list[dict]:
     for row in strong:
-        d.resolve_row_main_business(row, allow_live_lookup=True)
+        d.resolve_row_main_business(row, allow_live_lookup=ENABLE_LIVE_LOOKUPS)
     return strong
 
 
@@ -137,10 +149,13 @@ def patch_main_business_and_news(watch: list[dict], strong: list[dict]) -> tuple
         seen_codes.add(code)
         news_targets.append((name, code))
 
-    try:
-        news_map = d.fetch_latest_news_map(news_targets)
-    except Exception:
+    if SKIP_LIVE_NEWS:
         news_map = {}
+    else:
+        try:
+            news_map = d.fetch_latest_news_map(news_targets)
+        except Exception:
+            news_map = {}
 
     for row in all_rows:
         code = row.get("code", "")
@@ -157,7 +172,7 @@ def patch_main_business_and_news(watch: list[dict], strong: list[dict]) -> tuple
             row["businessSegments"] = historical.get("businessSegments")
         if not row.get("industry") and historical.get("industry"):
             row["industry"] = historical.get("industry")
-        d.resolve_row_main_business(row, allow_live_lookup=True)
+        d.resolve_row_main_business(row, allow_live_lookup=ENABLE_LIVE_LOOKUPS)
     return watch, strong
 
 
