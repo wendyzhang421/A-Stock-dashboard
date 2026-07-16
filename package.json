@@ -1,0 +1,13 @@
+{
+  "name": "astock-dashboard-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Vercel serverless API for the A-Stock dashboard.",
+  "scripts": {
+    "vercel-build": "echo \"No build step required for Vercel API functions\""
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

@@ -1,31 +1,22 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/dashboard-state.js",
-      "use": "@vercel/node@5.3.24"
-    },
-    {
-      "src": "api/report-analyze.js",
-      "use": "@vercel/node@5.3.24"
-    },
-    {
-      "src": "api/social-analyze.js",
-      "use": "@vercel/node@5.3.24"
+  "functions": {
+    "api/*.js": {
+      "runtime": "nodejs22.x"
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/api/dashboard-state",
-      "dest": "api/dashboard-state.js"
+      "source": "/api/dashboard-state",
+      "destination": "/api/dashboard-state.js"
     },
     {
-      "src": "/api/report-analyze",
-      "dest": "api/report-analyze.js"
+      "source": "/api/report-analyze",
+      "destination": "/api/report-analyze.js"
     },
     {
-      "src": "/api/social-analyze",
-      "dest": "api/social-analyze.js"
+      "source": "/api/social-analyze",
+      "destination": "/api/social-analyze.js"
     }
   ]
 }
