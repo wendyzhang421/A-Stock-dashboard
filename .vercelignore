@@ -2,6 +2,7 @@
 # Python scripts are used by GitHub Actions/local refresh jobs and can make
 # Vercel auto-detect this repository as a Python app.
 *.py
+!api/index.py
 scripts/
 __pycache__/
 .venv/
