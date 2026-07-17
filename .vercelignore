@@ -1,0 +1,15 @@
+# Keep the Vercel API deployment focused on Node serverless functions.
+# Python scripts are used by GitHub Actions/local refresh jobs and can make
+# Vercel auto-detect this repository as a Python app.
+*.py
+scripts/
+__pycache__/
+.venv/
+.github/
+requirements-actions.txt
+
+# Local-only state and generated caches.
+.DS_Store
+.env.local
+.telegram_*
+*.pyc
