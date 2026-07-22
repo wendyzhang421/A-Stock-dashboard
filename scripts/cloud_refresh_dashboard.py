@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +30,13 @@ SKIP_LIVE_NEWS = os.environ.get("ASTOCK_SKIP_LIVE_NEWS", "1").strip().lower() in
     "yes",
     "on",
 }
+ENABLE_STRONG_LIVE_LOOKUPS = os.environ.get("ASTOCK_STRONG_LIVE_LOOKUPS", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+STRONG_BUSINESS_WORKERS = max(1, int(os.environ.get("ASTOCK_STRONG_BUSINESS_WORKERS", "8")))
 
 
 def run_refresh(script_name: str, as_of: date) -> None:
@@ -132,9 +140,18 @@ def patch_watchlist_to_today(access_token: str | None, watch: list[dict], as_of:
 
 
 def patch_strong_main_business(strong: list[dict]) -> list[dict]:
-    for row in strong:
-        d.resolve_row_main_business(row, allow_live_lookup=ENABLE_LIVE_LOOKUPS)
-    return strong
+    if not strong:
+        return strong
+    with ThreadPoolExecutor(max_workers=min(STRONG_BUSINESS_WORKERS, len(strong))) as executor:
+        return list(
+            executor.map(
+                lambda row: d.resolve_row_main_business(
+                    row,
+                    allow_live_lookup=ENABLE_STRONG_LIVE_LOOKUPS,
+                ),
+                strong,
+            )
+        )
 
 
 def patch_main_business_and_news(watch: list[dict], strong: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -187,6 +204,9 @@ def main() -> int:
     index_path = reports / "share_dashboard" / "index.html"
     root_index_path = reports / "index.html"
 
+    for generated_path in (json_path, strong_path, institution_path, html_path):
+        generated_path.unlink(missing_ok=True)
+
     used_public_fallback = False
     used_cached_fallback = False
     refresh_errors: list[str] = []
@@ -194,29 +214,40 @@ def main() -> int:
         run_refresh("refresh_ifind_20260512.py", as_of)
     except Exception as exc:
         refresh_errors.append(f"refresh_ifind_20260512.py: {exc}")
-        print("iFinD refresh failed; falling back to public refresh", file=sys.stderr)
+        print("iFinD refresh failed", file=sys.stderr)
         traceback.print_exc()
-        used_public_fallback = True
-        try:
-            run_refresh("refresh_public_as_of.py", as_of)
-        except Exception as public_exc:
-            refresh_errors.append(f"refresh_public_as_of.py: {public_exc}")
-            print("Public refresh failed; falling back to cached baseline", file=sys.stderr)
-            traceback.print_exc()
-            used_cached_fallback = True
+        if json_path.exists() and strong_path.exists():
+            print("Using partial iFinD core reports; skipping public refresh", file=sys.stderr)
+        else:
+            used_public_fallback = True
+            try:
+                run_refresh("refresh_public_as_of.py", as_of)
+            except Exception as public_exc:
+                refresh_errors.append(f"refresh_public_as_of.py: {public_exc}")
+                print("Public refresh failed; falling back to cached baseline", file=sys.stderr)
+                traceback.print_exc()
+                used_cached_fallback = True
 
-    if used_cached_fallback or not json_path.exists() or not strong_path.exists():
+    if not json_path.exists() or not strong_path.exists() or not institution_path.exists():
         prior_json = latest_prior_path(reports, "watchlist_dashboard", ".json", as_of)
         prior_strong = latest_prior_path(reports, "watchlist_strong_stocks", ".json", as_of)
         prior_institution = latest_prior_path(reports, "institution_holdings", ".json", as_of)
         if not prior_json or not prior_strong:
             raise FileNotFoundError(f"No cached baseline available before {as_of.isoformat()}")
-        watch = load_json(prior_json)
-        strong = load_json(prior_strong)
-        institution_holdings = load_json(prior_institution) if prior_institution else {"date": as_of.isoformat(), "source": "cached fallback", "rows": []}
-        json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
-        strong_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
-        institution_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not json_path.exists():
+            json_path.write_text(prior_json.read_text(encoding="utf-8"), encoding="utf-8")
+        if not strong_path.exists():
+            strong_path.write_text(prior_strong.read_text(encoding="utf-8"), encoding="utf-8")
+        if not institution_path.exists():
+            institution_holdings = load_json(prior_institution) if prior_institution else {
+                "date": as_of.isoformat(),
+                "source": "cached fallback",
+                "rows": [],
+            }
+            institution_path.write_text(
+                json.dumps(institution_holdings, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
     access_token = None
     try:

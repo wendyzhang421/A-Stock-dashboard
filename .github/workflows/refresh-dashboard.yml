@@ -33,7 +33,10 @@ jobs:
       ASTOCK_REFRESH_STEP_TIMEOUT_SECONDS: "3600"
       ASTOCK_REFRESH_TIMEOUT_SECONDS: "1200"
       ASTOCK_CLOUD_LIVE_LOOKUPS: "0"
+      ASTOCK_STRONG_LIVE_LOOKUPS: "1"
+      ASTOCK_STRONG_BUSINESS_WORKERS: "8"
       ASTOCK_SKIP_LIVE_NEWS: "1"
+      ASTOCK_SKIP_AUXILIARY_REFRESH: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v6

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -11,6 +13,20 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import build_watchlist_dashboard as b
+
+SKIP_LIVE_NEWS = os.environ.get("ASTOCK_SKIP_LIVE_NEWS", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SKIP_AUXILIARY_REFRESH = os.environ.get("ASTOCK_SKIP_AUXILIARY_REFRESH", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+STRONG_BUSINESS_WORKERS = max(1, int(os.environ.get("ASTOCK_STRONG_BUSINESS_WORKERS", "8")))
 
 
 def main() -> int:
@@ -110,7 +126,11 @@ def main() -> int:
     candidate_basic_map = b.fetch_basic(access, candidate_codes) if candidate_codes else {}
     candidate_pe_map = b.fetch_pe_ratios(access, candidate_codes) if candidate_codes else {}
     print("strong-pe", len(candidate_pe_map), flush=True)
-    candidate_news_map = b.fetch_latest_news_map([(row["name"], row["code"]) for row in candidates]) if candidates else {}
+    candidate_news_map = (
+        {}
+        if SKIP_LIVE_NEWS
+        else b.fetch_latest_news_map([(row["name"], row["code"]) for row in candidates])
+    )
 
     def build_candidate_row(candidate: dict) -> dict | None:
         code = candidate["code"]
@@ -148,11 +168,6 @@ def main() -> int:
         built = row
         latest_news = candidate_news_map.get(code) or prev_strong_map.get(code, {}).get("latestNews") or built.get("latestNews") or {"time": "", "summary": "", "title": "", "link": ""}
         industry = built.get("industry") or prev_strong_map.get(code, {}).get("industry") or ""
-        if not b.normalize_main_business_value(industry):
-            try:
-                industry = b.fetch_industry(code) or industry
-            except Exception:
-                pass
         built["code"] = code
         built["name"] = candidate["name"]
         built["industry"] = industry
@@ -201,20 +216,33 @@ def main() -> int:
             continue
         if b.strong_stock_passes_final_filters(row):
             strong.append(row)
+    if strong:
+        with ThreadPoolExecutor(max_workers=min(STRONG_BUSINESS_WORKERS, len(strong))) as executor:
+            strong = list(
+                executor.map(
+                    lambda row: b.resolve_row_main_business(row, allow_live_lookup=True),
+                    strong,
+                )
+            )
     strong = b.finalize_strong_stocks(strong, set(watch_map))
     strong = b.hydrate_cached_strong_stocks(strong)
     print("strong-built", len(strong), flush=True)
+
+    json_path = out_dir / f"watchlist_dashboard_{as_of.isoformat()}.json"
+    strong_path = out_dir / f"watchlist_strong_stocks_{as_of.isoformat()}.json"
+    json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
+    strong_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("core-reports-written", json_path, strong_path, flush=True)
+
+    if SKIP_AUXILIARY_REFRESH:
+        return 0
 
     overview = b.fetch_market_overview(access)
     institution_holdings = b.fetch_institution_holdings(access)
     print("overview", len(overview.get("indices") or []), flush=True)
 
-    json_path = out_dir / f"watchlist_dashboard_{as_of.isoformat()}.json"
-    strong_path = out_dir / f"watchlist_strong_stocks_{as_of.isoformat()}.json"
     institution_path = out_dir / f"institution_holdings_{as_of.isoformat()}.json"
     html_path = out_dir / f"watchlist_dashboard_{as_of.isoformat()}.html"
-    json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
-    strong_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
     institution_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
     html_path.write_text(b.build_html(watch, strong, overview, institution_holdings), encoding="utf-8")
     (out_dir / "share_dashboard" / "index.html").write_text(
