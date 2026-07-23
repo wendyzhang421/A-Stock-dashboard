@@ -197,7 +197,7 @@ def send_document(session: requests.Session, image_path: Path, trade_date: date)
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         raise RuntimeError("missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
-    caption = f"{trade_date.month}月{trade_date.day}日 A股涨停热点复盘｜总市值 + PE TTM｜完整高清原始 PNG｜iFinD QuantAPI"
+    caption = f"{trade_date.month}月{trade_date.day}日 A股涨停热点复盘"
     with image_path.open("rb") as image_file:
         response = session.post(
             f"https://api.telegram.org/bot{token}/sendDocument",
