@@ -78,9 +78,16 @@ def fetch_rows(session: requests.Session, trade_date: date) -> list[dict]:
         {key: (values[index] if index < len(values) else None) for key, values in table.items()}
         for index in range(len(code_values))
     ]
+    date_key = trade_date.strftime("%Y%m%d")
+    cap_key = f"总市值[{date_key}]"
+    rows = [
+        row
+        for row in rows
+        if "ST" not in str(row.get("股票简称") or "").upper()
+        and float(row.get(cap_key) or 0) >= 5_000_000_000
+    ]
     if not rows:
         return []
-    date_key = trade_date.strftime("%Y%m%d")
     pe_result = api_post(
         session,
         "/basic_data_service",
@@ -197,7 +204,7 @@ def send_document(session: requests.Session, image_path: Path, trade_date: date)
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         raise RuntimeError("missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
-    caption = f"{trade_date.month}月{trade_date.day}日 A股涨停热点复盘｜总市值 + PE TTM｜完整高清原始 PNG｜iFinD QuantAPI"
+    caption = f"{trade_date.month}月{trade_date.day}日 A股涨停热点复盘"
     with image_path.open("rb") as image_file:
         response = session.post(
             f"https://api.telegram.org/bot{token}/sendDocument",
