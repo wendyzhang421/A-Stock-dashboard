@@ -1,0 +1,73 @@
+name: Send iFinD Hot Recap to Telegram
+
+on:
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: Optional trading date in YYYY-MM-DD format
+        required: false
+        type: string
+      dry_run:
+        description: Generate without sending Telegram
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "0 11 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: send-ifind-hot-recap
+  cancel-in-progress: false
+
+jobs:
+  generate-and-send:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      ASTOCK_TRUST_ENV: "0"
+      ASTOCK_IFIND_REFRESH_TOKEN: ${{ secrets.ASTOCK_IFIND_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-actions.txt
+
+      - name: Install dependencies and CJK font
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          python -m pip install -r requirements-actions.txt
+
+      - name: Generate and send full-resolution recap
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${{ github.event.inputs.as_of || '' }}" ]; then
+            args+=(--date "${{ github.event.inputs.as_of }}")
+          fi
+          if [ "${{ github.event.inputs.dry_run || 'false' }}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          python scripts/send_ifind_hot_recap.py "${args[@]}"
+
+      - name: Upload generated recap
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ifind-hot-recap-${{ github.run_id }}
+          path: reports/hot_recap/
+          if-no-files-found: ignore
+          retention-days: 7
