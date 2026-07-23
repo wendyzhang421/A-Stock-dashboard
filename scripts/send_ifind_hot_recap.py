@@ -78,9 +78,16 @@ def fetch_rows(session: requests.Session, trade_date: date) -> list[dict]:
         {key: (values[index] if index < len(values) else None) for key, values in table.items()}
         for index in range(len(code_values))
     ]
+    date_key = trade_date.strftime("%Y%m%d")
+    cap_key = f"总市值[{date_key}]"
+    rows = [
+        row
+        for row in rows
+        if "ST" not in str(row.get("股票简称") or "").upper()
+        and float(row.get(cap_key) or 0) >= 5_000_000_000
+    ]
     if not rows:
         return []
-    date_key = trade_date.strftime("%Y%m%d")
     pe_result = api_post(
         session,
         "/basic_data_service",
