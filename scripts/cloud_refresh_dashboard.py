@@ -279,7 +279,11 @@ def main() -> int:
 
     json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
     strong_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
-    html_path.write_text(d.build_html(watch, strong, market_overview, institution_holdings), encoding="utf-8")
+    monthly_gold_stocks = d.build_monthly_gold_stocks(as_of)
+    html_path.write_text(
+        d.build_html(watch, strong, market_overview, institution_holdings, monthly_gold_stocks),
+        encoding="utf-8",
+    )
     index_path.write_text(
         f'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=../watchlist_dashboard_{as_of.isoformat()}.html">',
         encoding="utf-8",

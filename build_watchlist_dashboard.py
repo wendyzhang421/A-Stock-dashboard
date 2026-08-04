@@ -213,14 +213,15 @@ def load_report_name_index() -> dict[str, str]:
 
 def load_watchlist_state_payload() -> dict[str, object]:
     if not WATCHLIST_STATE_PATH.exists():
-        return {"watchlistStatus": {}, "strongJoinStatus": {}}
+        return {"watchlistStatus": {}, "strongJoinStatus": {}, "monthlyGoldLogic": {}}
     try:
         payload = json.loads(WATCHLIST_STATE_PATH.read_text(encoding="utf-8"))
     except Exception:
-        return {"watchlistStatus": {}, "strongJoinStatus": {}}
+        return {"watchlistStatus": {}, "strongJoinStatus": {}, "monthlyGoldLogic": {}}
     return {
         "watchlistStatus": payload.get("watchlistStatus") or {},
         "strongJoinStatus": payload.get("strongJoinStatus") or {},
+        "monthlyGoldLogic": payload.get("monthlyGoldLogic") or {},
         "updatedAt": payload.get("updatedAt") or "",
     }
 
@@ -609,7 +610,27 @@ WATCHLIST_BASE = [
     ("富创精密", "688409.SH"),
 ]
 
+# 月度重点跟踪池。行业字段用于页面内的固定分类排序，不随行情刷新改变。
+MONTHLY_GOLD_BASE = [
+    ("源杰科技", "688498.SH", "半导体"),
+    ("新恒汇", "301678.SZ", "半导体"),
+    ("长盈精密", "300115.SZ", "电子"),
+    ("冰轮环境", "000811.SZ", "机械设备"),
+    ("应流股份", "603308.SH", "机械设备"),
+    ("智翔金泰", "688443.SH", "医药生物"),
+    ("恒瑞医药", "600276.SH", "医药生物"),
+    ("西部矿业", "601168.SH", "有色金属"),
+]
+
 MAIN_BUSINESS_MAP = {
+    "000811.SZ": "制冷设备/工业冷冻",
+    "300115.SZ": "消费电子精密结构件/新能源连接件",
+    "301678.SZ": "柔性引线框架/智能卡模块封装材料",
+    "600276.SH": "创新药/抗肿瘤药",
+    "601168.SH": "铜铅锌矿采选/冶炼",
+    "603308.SH": "高端铸件/航空发动机零部件",
+    "688443.SH": "抗体药物/自身免疫与感染疾病",
+    "688498.SH": "高速光芯片/CPO",
     "000815.SZ": "IDC/国资云",
     "301312.SZ": "光模块设备/CPO检测",
     "688205.SH": "高速光模块/CPO",
@@ -4216,19 +4237,22 @@ def build_html(
     strong_stocks: list[dict],
     market_overview: dict[str, object] | None = None,
     institution_holdings: dict[str, object] | None = None,
+    monthly_gold_stocks: list[dict] | None = None,
 ) -> str:
+    monthly_gold_stocks = monthly_gold_stocks or []
     market_overview = market_overview or {}
     institution_holdings = institution_holdings or {}
     watchlist_state_payload = load_watchlist_state_payload()
     initial_watchlist_status = watchlist_state_payload.get("watchlistStatus") or {}
     initial_strong_join_status = watchlist_state_payload.get("strongJoinStatus") or {}
+    initial_monthly_gold_logic = watchlist_state_payload.get("monthlyGoldLogic") or {}
     initial_report_entries = load_research_report_entries()
     initial_social_trackers = load_social_kol_watchlist()
     initial_social_entries = load_social_media_entries()
     market_dates = sorted(
         {
             row[0]
-            for item in (dataset + strong_stocks)
+            for item in (dataset + strong_stocks + monthly_gold_stocks)
             for row in (item.get("kline") or [])
             if row and row[0]
         }
@@ -4522,11 +4546,11 @@ def build_html(
             </tr>
             """
         )
-    current_modal_codes = {item.get("code") for item in (dataset + strong_stocks) if item.get("code")}
+    current_modal_codes = {item.get("code") for item in (dataset + strong_stocks + monthly_gold_stocks) if item.get("code")}
     institution_modal_extras = load_institution_modal_extras(institution_holdings, current_modal_codes)
     current_modal_codes.update(item.get("code") for item in institution_modal_extras if item.get("code"))
     report_modal_extras = institution_modal_extras + load_report_modal_extras(current_modal_codes)
-    modal_items = dataset + strong_stocks + report_modal_extras
+    modal_items = dataset + strong_stocks + monthly_gold_stocks + report_modal_extras
     cap_groups = [
         ("mega", "1000亿以上"),
         ("large", "500-1000亿"),
@@ -4581,7 +4605,7 @@ def build_html(
             """
         )
 
-    def build_momentum_rows(rows: list[dict], index_key: str) -> list[str]:
+    def build_momentum_rows(rows: list[dict], index_key: str, core_logic: bool = False) -> list[str]:
         out = []
         for item in rows:
             pct_class = "pct-rise" if (item["todayPct"] or 0) > 0 else "pct-fall" if (item["todayPct"] or 0) < 0 else "pct-flat"
@@ -4601,6 +4625,12 @@ def build_html(
                     </select>
                 '''
             )
+            last_cell_html = (
+                f'<textarea class="core-logic-input" data-code="{item["code"]}" rows="2" '
+                f'aria-label="{item["name"]}核心逻辑" placeholder="输入核心逻辑"></textarea>'
+                if core_logic
+                else join_select_html
+            )
             out.append(
                 f"""
                 <tr data-strong-stock-row="true" data-cap-group="{group_key}" data-code="{item['code']}" data-name="{item['name']}" data-main-business="{item['mainBusiness'] or '-'}" data-total-market-cap="{item['totalMarketCap'] or 0}" data-float-market-cap="{item['floatMarketCap'] or 0}" data-today-amount="{item['todayAmount'] or 0}" data-turnover-rate="{'' if item['turnoverRate'] is None else item['turnoverRate']}" data-today-pct="{'' if item['todayPct'] is None else item['todayPct']}">
@@ -4617,7 +4647,7 @@ def build_html(
                   <td class="nowrap-cell">{'-' if item['turnoverRate'] is None else f"{item['turnoverRate']:.2f}%"}</td>
                   <td class="{pct_class}">{'-' if item['todayPct'] is None else f"{item['todayPct']:+.2f}%"}</td>
                   <td class="nowrap-cell">{format_pe_cell(item)}</td>
-                  <td>{join_select_html}</td>
+                  <td>{last_cell_html}</td>
                 </tr>
                 """
             )
@@ -4628,6 +4658,7 @@ def build_html(
         key: build_momentum_rows([item for item in strong_stocks if cap_group_key(item) == key], "strong")
         for key, _ in cap_groups
     }
+    monthly_gold_rows_html = "".join(build_momentum_rows(monthly_gold_stocks, "monthly-gold", core_logic=True))
 
     strong_head_html = """
           <tr>
@@ -4642,6 +4673,7 @@ def build_html(
             <th>加入自选</th>
           </tr>
     """
+    monthly_gold_head_html = strong_head_html.replace("<th>加入自选</th>", "<th>核心逻辑</th>")
     watchlist_head_html = """
           <tr>
             <th>编号</th>
@@ -4669,6 +4701,8 @@ def build_html(
         return "".join(out)
 
     strong_grouped_rows_html = render_grouped_rows(strong_rows_by_cap, 9)
+    if not monthly_gold_rows_html:
+        monthly_gold_rows_html = '<tr class="empty-group-row" data-empty-row="true"><td colspan="9">暂无符合股票</td></tr>'
     watchlist_grouped_rows_html = render_grouped_rows(watchlist_rows_by_cap, 10)
 
     return f"""<!doctype html>
@@ -6012,6 +6046,26 @@ def build_html(
       font-weight: 700;
       outline: none;
     }}
+    .core-logic-input {{
+      width: min(360px, 28vw);
+      min-width: 260px;
+      min-height: 58px;
+      border: 1px solid rgba(83,242,229,0.16);
+      background: rgba(83,242,229,0.06);
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow: hidden;
+      resize: vertical;
+      outline: none;
+    }}
+    .core-logic-input:focus {{
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(15,118,110,0.10);
+    }}
     .join-watchlist-select:disabled {{
       color: var(--muted);
       border-color: rgba(31,42,55,0.10);
@@ -6452,6 +6506,9 @@ def build_html(
     .join-watchlist-select {{
       color: #1f1f1f !important;
     }}
+    .core-logic-input {{
+      color: #1f1f1f !important;
+    }}
     body[data-theme="dark"] .search-input,
     body[data-theme="dark"] .report-input,
     body[data-theme="dark"] .report-textarea,
@@ -6459,6 +6516,9 @@ def build_html(
     body[data-theme="dark"] .sidebar-link,
     body[data-theme="dark"] .status-select,
     body[data-theme="dark"] .join-watchlist-select {{
+      color: #f2f2f2 !important;
+    }}
+    body[data-theme="dark"] .core-logic-input {{
       color: #f2f2f2 !important;
     }}
     .search-input::placeholder,
@@ -6553,6 +6613,23 @@ def build_html(
         </thead>
         <tbody id="strong-stocks-table-body" class="strong-stocks-table-body">
           {strong_grouped_rows_html}
+        </tbody>
+      </table>
+    </section>
+    <div class="section-head compact-section-head">
+      <div>
+        <h2>当月金股</h2>
+        <p>按行业分类排序</p>
+      </div>
+      <span class="pill">共 {len(monthly_gold_stocks)} 只</span>
+    </div>
+    <section class="summary-table-wrap compact-table-wrap">
+      <table class="summary-table">
+        <thead>
+          {monthly_gold_head_html}
+        </thead>
+        <tbody id="monthly-gold-table-body" class="strong-stocks-table-body">
+          {monthly_gold_rows_html}
         </tbody>
       </table>
     </section>
@@ -6960,11 +7037,13 @@ def build_html(
   <script>
     const dataset = {json.dumps(dataset, ensure_ascii=False)};
     const strongStocks = {json.dumps(strong_stocks, ensure_ascii=False)};
+    const monthlyGoldStocks = {json.dumps(monthly_gold_stocks, ensure_ascii=False)};
     const reportModalExtras = {json.dumps(report_modal_extras, ensure_ascii=False)};
     const marketOverview = {json.dumps(client_market_overview, ensure_ascii=False)};
     const institutionHoldings = {json.dumps(institution_holdings, ensure_ascii=False)};
     const datasetCodeSet = new Set(dataset.map(item => item.code));
-    const momentumExtras = strongStocks.filter((item, idx, list) => {{
+    const momentumCandidates = strongStocks.concat(monthlyGoldStocks);
+    const momentumExtras = momentumCandidates.filter((item, idx, list) => {{
       if (datasetCodeSet.has(item.code)) return false;
       return list.findIndex(other => other.code === item.code) === idx;
     }});
@@ -7129,6 +7208,7 @@ def build_html(
     const socialCountPill = document.getElementById('social-count-pill');
     const socialActionNote = document.getElementById('social-action-note');
     const strongStocksTableBody = document.getElementById('strong-stocks-table-body');
+    const monthlyGoldTableBody = document.getElementById('monthly-gold-table-body');
     const watchlistTableBody = document.getElementById('watchlist-table-body');
     const stockExposureTableBody = document.getElementById('stock-exposure-table-body');
     const removedPanel = document.getElementById('removed-panel');
@@ -7171,20 +7251,15 @@ def build_html(
     const DASHBOARD_ADMIN_TOKEN_KEY = 'astock_dashboard_admin_token_v1';
     const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
     const REPORT_HIDDEN_IDS_KEY = 'astock_report_hidden_ids_v1';
+    const MONTHLY_GOLD_LOGIC_KEY = 'astock_monthly_gold_logic_v1';
     const INITIAL_WATCHLIST_STATUS = {json.dumps(initial_watchlist_status, ensure_ascii=False)};
     const INITIAL_STRONG_JOIN_STATUS = {json.dumps(initial_strong_join_status, ensure_ascii=False)};
+    const INITIAL_MONTHLY_GOLD_LOGIC = {json.dumps(initial_monthly_gold_logic, ensure_ascii=False)};
     const INITIAL_REPORT_ENTRIES = {json.dumps(initial_report_entries, ensure_ascii=False)};
     const INITIAL_SOCIAL_TRACKERS = {json.dumps(initial_social_trackers, ensure_ascii=False)};
     const INITIAL_SOCIAL_ENTRIES = {json.dumps(initial_social_entries, ensure_ascii=False)};
     const DEFAULT_DASHBOARD_STATE_API = (() => {{
-      const host = window.location.hostname;
-      if (host === 'stockkiller.xyz' || host === 'www.stockkiller.xyz') {{
-        return 'https://api.stockkiller.xyz/api/dashboard-state';
-      }}
-      if (window.location.protocol === 'file:') {{
-        return 'https://api.stockkiller.xyz/api/dashboard-state';
-      }}
-      return '';
+      return 'https://api.stockkiller.xyz/api/dashboard-state';
     }})();
     const DEFAULT_REPORT_ANALYZE_API = DEFAULT_DASHBOARD_STATE_API
       ? DEFAULT_DASHBOARD_STATE_API.replace('/dashboard-state', '/report-analyze')
@@ -7464,6 +7539,17 @@ def build_html(
       return next;
     }}
 
+    function normalizeMonthlyGoldLogicPayload(payload) {{
+      const next = {{}};
+      if (!payload || typeof payload !== 'object') return next;
+      Object.entries(payload).forEach(([code, value]) => {{
+        const normalizedCode = String(code || '').trim().toUpperCase();
+        const normalizedValue = String(value || '').trim().slice(0, 4000);
+        if (normalizedCode && normalizedValue) next[normalizedCode] = normalizedValue;
+      }});
+      return next;
+    }}
+
     function replaceObjectContents(target, source) {{
       Object.keys(target).forEach(key => delete target[key]);
       Object.entries(source).forEach(([key, value]) => {{
@@ -7700,6 +7786,7 @@ def build_html(
       return {{
         watchlistStatus: normalizeWatchlistStatusPayload(watchlistStatusMap),
         strongJoinStatus: normalizeStrongJoinPayload(strongJoinMap),
+        monthlyGoldLogic: normalizeMonthlyGoldLogicPayload(monthlyGoldLogicMap),
         reports: loadReportEntries(),
         socialKolWatchlist: loadSocialTrackers(),
         socialPosts: loadSocialEntries(),
@@ -7760,13 +7847,17 @@ def build_html(
     function applyRemoteDashboardState(payload) {{
       const nextWatchlistStatus = normalizeWatchlistStatusPayload(payload?.watchlistStatus || {{}});
       const nextStrongJoinStatus = normalizeStrongJoinPayload(payload?.strongJoinStatus || {{}});
+      const nextMonthlyGoldLogic = normalizeMonthlyGoldLogicPayload(payload?.monthlyGoldLogic || {{}});
       const nextReports = mergeReportEntries([], Array.isArray(payload?.reports) ? payload.reports : []);
       const nextSocialKolWatchlist = mergeSocialTrackers([], Array.isArray(payload?.socialKolWatchlist) ? payload.socialKolWatchlist : []);
       const nextSocialPosts = mergeSocialEntries([], Array.isArray(payload?.socialPosts) ? payload.socialPosts : []);
       replaceObjectContents(watchlistStatusMap, nextWatchlistStatus);
       replaceObjectContents(strongJoinMap, nextStrongJoinStatus);
+      replaceObjectContents(monthlyGoldLogicMap, nextMonthlyGoldLogic);
       saveWatchlistStatus(watchlistStatusMap);
       saveStrongJoinStatus(strongJoinMap);
+      window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
+      syncMonthlyGoldLogicInputs();
       saveReportEntries(nextReports);
       saveSocialTrackers(nextSocialKolWatchlist);
       saveSocialEntries(nextSocialPosts);
@@ -8226,6 +8317,12 @@ def build_html(
         const cell = row.querySelector('[data-index-cell="strong"]');
         if (cell) cell.textContent = String(strongIndex++);
       }});
+      let monthlyGoldIndex = 1;
+      monthlyGoldTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(row => {{
+        if (row.style.display === 'none') return;
+        const cell = row.querySelector('[data-index-cell="monthly-gold"]');
+        if (cell) cell.textContent = String(monthlyGoldIndex++);
+      }});
       let watchIndex = 1;
       watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]').forEach(row => {{
         if (row.style.display === 'none') return;
@@ -8375,6 +8472,12 @@ def build_html(
       const existingCodes = new Set([...watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]:not([data-synthetic="true"])')].map(row => row.dataset.code));
       const syntheticItems = [];
       strongStocks.forEach(item => {{
+        if (existingCodes.has(item.code)) return;
+        if (strongJoinMap[item.code] !== 'joined') return;
+        syntheticItems.push(item);
+        existingCodes.add(item.code);
+      }});
+      monthlyGoldStocks.forEach(item => {{
         if (existingCodes.has(item.code)) return;
         if (strongJoinMap[item.code] !== 'joined') return;
         syntheticItems.push(item);
@@ -8576,6 +8679,27 @@ def build_html(
 
     const watchlistStatusMap = loadWatchlistStatus();
     const strongJoinMap = loadStrongJoinStatus();
+    let monthlyGoldLogicMap = {{...INITIAL_MONTHLY_GOLD_LOGIC}};
+    try {{
+      monthlyGoldLogicMap = {{
+        ...monthlyGoldLogicMap,
+        ...normalizeMonthlyGoldLogicPayload(JSON.parse(window.localStorage.getItem(MONTHLY_GOLD_LOGIC_KEY) || '{{}}')),
+      }};
+    }} catch (error) {{
+      monthlyGoldLogicMap = {{...INITIAL_MONTHLY_GOLD_LOGIC}};
+    }}
+
+    function resizeCoreLogicInput(input) {{
+      input.style.height = 'auto';
+      input.style.height = `${{input.scrollHeight}}px`;
+    }}
+
+    function syncMonthlyGoldLogicInputs() {{
+      monthlyGoldTableBody.querySelectorAll('.core-logic-input').forEach(input => {{
+        input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
+        resizeCoreLogicInput(input);
+      }});
+    }}
 
     document.querySelectorAll('.stock-trigger').forEach(node => {{
       node.addEventListener('click', event => {{
@@ -8598,6 +8722,21 @@ def build_html(
 
     watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]').forEach(bindWatchlistRow);
     strongStocksTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(bindStrongStockRow);
+    monthlyGoldTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(bindStrongStockRow);
+    monthlyGoldTableBody.querySelectorAll('.core-logic-input').forEach(input => {{
+      input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
+      resizeCoreLogicInput(input);
+      input.addEventListener('input', () => {{
+        const value = input.value.trim();
+        if (value) monthlyGoldLogicMap[input.dataset.code] = value;
+        else delete monthlyGoldLogicMap[input.dataset.code];
+        window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
+        resizeCoreLogicInput(input);
+      }});
+      input.addEventListener('change', () => {{
+        queueDashboardStateSync(undefined, {{ promptForToken: true }});
+      }});
+    }});
 
     document.querySelectorAll('.join-watchlist-select').forEach(select => {{
       const code = select.dataset.code;
@@ -9086,6 +9225,50 @@ def hydrate_cached_strong_stocks(rows: list[dict]) -> list[dict]:
     return rows
 
 
+def build_monthly_gold_stocks(as_of: date) -> list[dict]:
+    rows: list[dict] = []
+    for name, code, industry in MONTHLY_GOLD_BASE:
+        historical = load_historical_report_row(code) or {}
+        row = {
+            "code": code,
+            "name": name,
+            "industry": industry,
+            "mainBusiness": "",
+            "latestClose": None,
+            "totalMarketCap": 0.0,
+            "floatMarketCap": 0.0,
+            "todayAmount": 0.0,
+            "todayVolume": 0.0,
+            "turnoverRate": None,
+            "todayPct": None,
+            "peRatio": None,
+            "latestNews": {"time": "", "summary": "", "title": "", "link": ""},
+            "research": empty_research_payload(),
+            "marginFinancing": {"date": "", "finBalance": None, "loanBalance": None, "finBuyAmount": None},
+            "topHolders": empty_top_holders_payload(),
+            "businessSegments": {"reportDate": "", "category": "", "items": []},
+            "topCustomers": {"reportDate": "", "totalAmount": None, "totalRatio": None, "customers": []},
+            "orderBook": {"time": "", "asks": [], "bids": []},
+            "kline": [],
+            "last5": [],
+        }
+        if historical:
+            row.update(historical)
+        row["code"] = code
+        row["name"] = name
+        row["industry"] = industry
+        if TRUST_ENV:
+            try:
+                row = update_row_from_public_kline(row, as_of)
+            except Exception:
+                pass
+        rows.append(row)
+    rows = hydrate_cached_strong_stocks(rows)
+    return sorted(rows, key=lambda item: next(
+        idx for idx, (_, code, _) in enumerate(MONTHLY_GOLD_BASE) if code == item["code"]
+    ))
+
+
 def strengthen_main_business_for_rows(rows: list[dict]) -> list[dict]:
     for item in rows:
         resolve_row_main_business(item, allow_live_lookup=True)
@@ -9343,7 +9526,8 @@ def quick_refresh_dashboard(as_of: date) -> tuple[Path, Path, Path]:
     json_path.write_text(json.dumps(watch, ensure_ascii=False, indent=2), encoding="utf-8")
     strong_json_path.write_text(json.dumps(strong, ensure_ascii=False, indent=2), encoding="utf-8")
     institution_json_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
-    html_path.write_text(build_html(watch, strong, market_overview, institution_holdings), encoding="utf-8")
+    monthly_gold_stocks = build_monthly_gold_stocks(as_of)
+    html_path.write_text(build_html(watch, strong, market_overview, institution_holdings, monthly_gold_stocks), encoding="utf-8")
     return html_path, json_path, strong_json_path
 
 
@@ -9423,6 +9607,7 @@ def main() -> int:
     strong_stocks = finalize_strong_stocks(strong_stocks, {row["code"] for row in dataset})
     strong_stocks = supplement_strong_stocks_from_watchlist(dataset, strong_stocks)
     strong_stocks = strengthen_main_business_for_rows(strong_stocks)
+    monthly_gold_stocks = build_monthly_gold_stocks(AS_OF)
     if access_token is None:
         try:
             access_token = get_access_token()
@@ -9431,6 +9616,7 @@ def main() -> int:
     if access_token is not None:
         try:
             strong_stocks = backfill_pe_ratios(access_token, strong_stocks)
+            monthly_gold_stocks = backfill_pe_ratios(access_token, monthly_gold_stocks)
         except Exception:
             pass
     market_overview = fetch_market_overview(access_token)
@@ -9441,7 +9627,7 @@ def main() -> int:
     institution_json_path = OUT_DIR / f"institution_holdings_{AS_OF.isoformat()}.json"
     institution_json_path.write_text(json.dumps(institution_holdings, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    html = build_html(dataset, strong_stocks, market_overview, institution_holdings)
+    html = build_html(dataset, strong_stocks, market_overview, institution_holdings, monthly_gold_stocks)
     html_path = OUT_DIR / f"watchlist_dashboard_{AS_OF.isoformat()}.html"
     html_path.write_text(html, encoding="utf-8")
 

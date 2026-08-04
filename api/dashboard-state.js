@@ -48,6 +48,17 @@ function sanitizeStrongJoinStatus(payload) {
   return out;
 }
 
+function sanitizeMonthlyGoldLogic(payload) {
+  const out = {};
+  if (!payload || typeof payload !== "object") return out;
+  for (const [code, value] of Object.entries(payload)) {
+    const key = String(code || "").trim().toUpperCase();
+    const text = String(value || "").trim().slice(0, 4000);
+    if (key && text) out[key] = text;
+  }
+  return out;
+}
+
 function normalizeTargetLabel(value) {
   if (value == null) return "";
   if (typeof value === "string" || typeof value === "number") {
@@ -284,6 +295,7 @@ async function loadStateBundle() {
   const watch = await readRepoJson(WATCHLIST_STATE_PATH, {
     watchlistStatus: {},
     strongJoinStatus: {},
+    monthlyGoldLogic: {},
     updatedAt: "",
   });
   const reports = await readRepoJson(RESEARCH_REPORTS_PATH, []);
@@ -292,6 +304,7 @@ async function loadStateBundle() {
   return {
     watchlistStatus: sanitizeWatchlistStatus(watch.data.watchlistStatus || {}),
     strongJoinStatus: sanitizeStrongJoinStatus(watch.data.strongJoinStatus || {}),
+    monthlyGoldLogic: sanitizeMonthlyGoldLogic(watch.data.monthlyGoldLogic || {}),
     reports: sanitizeReports(reports.data),
     socialKolWatchlist: sanitizeSocialKolWatchlist(socialKolWatchlist.data),
     socialPosts: sanitizeSocialPosts(socialPosts.data),
@@ -344,6 +357,9 @@ module.exports = async (req, res) => {
     const nextStrongJoinStatus = Object.prototype.hasOwnProperty.call(body, "strongJoinStatus")
       ? sanitizeStrongJoinStatus(body.strongJoinStatus)
       : current.strongJoinStatus;
+    const nextMonthlyGoldLogic = Object.prototype.hasOwnProperty.call(body, "monthlyGoldLogic")
+      ? sanitizeMonthlyGoldLogic(body.monthlyGoldLogic)
+      : current.monthlyGoldLogic;
     const nextReports = Object.prototype.hasOwnProperty.call(body, "reports")
       ? sanitizeReports(body.reports)
       : current.reports;
@@ -358,6 +374,7 @@ module.exports = async (req, res) => {
     const watchPayload = {
       watchlistStatus: nextWatchlistStatus,
       strongJoinStatus: nextStrongJoinStatus,
+      monthlyGoldLogic: nextMonthlyGoldLogic,
       updatedAt,
     };
     await writeRepoJson(
@@ -388,6 +405,7 @@ module.exports = async (req, res) => {
     sendJson(res, 200, {
       watchlistStatus: nextWatchlistStatus,
       strongJoinStatus: nextStrongJoinStatus,
+      monthlyGoldLogic: nextMonthlyGoldLogic,
       reports: nextReports,
       socialKolWatchlist: nextSocialKolWatchlist,
       socialPosts: nextSocialPosts,
