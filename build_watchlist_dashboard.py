@@ -213,15 +213,16 @@ def load_report_name_index() -> dict[str, str]:
 
 def load_watchlist_state_payload() -> dict[str, object]:
     if not WATCHLIST_STATE_PATH.exists():
-        return {"watchlistStatus": {}, "strongJoinStatus": {}, "monthlyGoldLogic": {}}
+        return {"watchlistStatus": {}, "strongJoinStatus": {}, "monthlyGoldLogic": {}, "monthlyGoldCodes": []}
     try:
         payload = json.loads(WATCHLIST_STATE_PATH.read_text(encoding="utf-8"))
     except Exception:
-        return {"watchlistStatus": {}, "strongJoinStatus": {}, "monthlyGoldLogic": {}}
+        return {"watchlistStatus": {}, "strongJoinStatus": {}, "monthlyGoldLogic": {}, "monthlyGoldCodes": []}
     return {
         "watchlistStatus": payload.get("watchlistStatus") or {},
         "strongJoinStatus": payload.get("strongJoinStatus") or {},
         "monthlyGoldLogic": payload.get("monthlyGoldLogic") or {},
+        "monthlyGoldCodes": payload.get("monthlyGoldCodes") or [],
         "updatedAt": payload.get("updatedAt") or "",
     }
 
@@ -4246,6 +4247,7 @@ def build_html(
     initial_watchlist_status = watchlist_state_payload.get("watchlistStatus") or {}
     initial_strong_join_status = watchlist_state_payload.get("strongJoinStatus") or {}
     initial_monthly_gold_logic = watchlist_state_payload.get("monthlyGoldLogic") or {}
+    initial_monthly_gold_codes = watchlist_state_payload.get("monthlyGoldCodes") or []
     initial_report_entries = load_research_report_entries()
     initial_social_trackers = load_social_kol_watchlist()
     initial_social_entries = load_social_media_entries()
@@ -5472,6 +5474,55 @@ def build_html(
       padding: 4px 8px;
       font-size: 10px;
     }}
+    .monthly-gold-head-actions,
+    .monthly-gold-add-control {{
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }}
+    .monthly-gold-section-head {{
+      align-items: flex-start;
+    }}
+    .monthly-gold-head-actions {{
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }}
+    .monthly-gold-name-input {{
+      width: 168px;
+      border: 1px solid rgba(83,242,229,0.16);
+      background: rgba(83,242,229,0.06);
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 12px;
+      outline: none;
+    }}
+    .monthly-gold-name-input:focus {{
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(15,118,110,0.10);
+    }}
+    .monthly-gold-add-button {{
+      border: 1px solid rgba(15,118,110,0.20);
+      background: rgba(15,118,110,0.12);
+      color: var(--accent);
+      border-radius: 6px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }}
+    .monthly-gold-action-note {{
+      max-width: 190px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }}
+    .monthly-gold-action-note[data-state="success"] {{
+      color: var(--accent);
+    }}
+    .monthly-gold-action-note[data-state="error"] {{
+      color: var(--danger);
+    }}
     .summary-table {{
       width: 100%;
       border-collapse: collapse;
@@ -5483,6 +5534,41 @@ def build_html(
       text-align: left;
       border-bottom: 1px solid rgba(83,242,229,0.08);
       vertical-align: middle;
+    }}
+    .monthly-gold-table {{
+      min-width: 1420px;
+      table-layout: fixed;
+    }}
+    .monthly-gold-table th,
+    .monthly-gold-table td {{
+      padding-left: 5px;
+      padding-right: 5px;
+    }}
+    .monthly-gold-table th:nth-child(1),
+    .monthly-gold-table td:nth-child(1) {{ width: 40px; }}
+    .monthly-gold-table th:nth-child(2),
+    .monthly-gold-table td:nth-child(2) {{ width: 108px; }}
+    .monthly-gold-table th:nth-child(3),
+    .monthly-gold-table td:nth-child(3) {{ width: 150px; }}
+    .monthly-gold-table th:nth-child(4),
+    .monthly-gold-table td:nth-child(4) {{ width: 145px; }}
+    .monthly-gold-table th:nth-child(5),
+    .monthly-gold-table td:nth-child(5) {{ width: 90px; }}
+    .monthly-gold-table th:nth-child(6),
+    .monthly-gold-table td:nth-child(6) {{ width: 66px; }}
+    .monthly-gold-table th:nth-child(7),
+    .monthly-gold-table td:nth-child(7) {{ width: 70px; }}
+    .monthly-gold-table th:nth-child(8),
+    .monthly-gold-table td:nth-child(8) {{ width: 58px; }}
+    .monthly-gold-table th:nth-child(9),
+    .monthly-gold-table td:nth-child(9) {{
+      width: 46%;
+      min-width: 520px;
+    }}
+    .monthly-gold-table .core-logic-input {{
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
     }}
     .index-cell {{
       width: 38px;
@@ -6616,15 +6702,22 @@ def build_html(
         </tbody>
       </table>
     </section>
-    <div class="section-head compact-section-head">
+    <div class="section-head compact-section-head monthly-gold-section-head">
       <div>
         <h2>当月金股</h2>
         <p>按行业分类排序</p>
       </div>
-      <span class="pill">共 {len(monthly_gold_stocks)} 只</span>
+      <div class="monthly-gold-head-actions">
+        <div class="monthly-gold-add-control">
+          <input id="monthly-gold-name-input" class="monthly-gold-name-input" type="text" placeholder="输入股票名称" aria-label="新增当月金股股票名称" />
+          <button id="monthly-gold-add-button" class="monthly-gold-add-button" type="button">添加</button>
+        </div>
+        <span id="monthly-gold-action-note" class="monthly-gold-action-note"></span>
+        <span id="monthly-gold-count-pill" class="pill">共 {len(monthly_gold_stocks)} 只</span>
+      </div>
     </div>
     <section class="summary-table-wrap compact-table-wrap">
-      <table class="summary-table">
+      <table class="summary-table monthly-gold-table">
         <thead>
           {monthly_gold_head_html}
         </thead>
@@ -7209,6 +7302,10 @@ def build_html(
     const socialActionNote = document.getElementById('social-action-note');
     const strongStocksTableBody = document.getElementById('strong-stocks-table-body');
     const monthlyGoldTableBody = document.getElementById('monthly-gold-table-body');
+    const monthlyGoldNameInput = document.getElementById('monthly-gold-name-input');
+    const monthlyGoldAddButton = document.getElementById('monthly-gold-add-button');
+    const monthlyGoldActionNote = document.getElementById('monthly-gold-action-note');
+    const monthlyGoldCountPill = document.getElementById('monthly-gold-count-pill');
     const watchlistTableBody = document.getElementById('watchlist-table-body');
     const stockExposureTableBody = document.getElementById('stock-exposure-table-body');
     const removedPanel = document.getElementById('removed-panel');
@@ -7252,9 +7349,11 @@ def build_html(
     const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
     const REPORT_HIDDEN_IDS_KEY = 'astock_report_hidden_ids_v1';
     const MONTHLY_GOLD_LOGIC_KEY = 'astock_monthly_gold_logic_v1';
+    const MONTHLY_GOLD_CODES_KEY = 'astock_monthly_gold_codes_v1';
     const INITIAL_WATCHLIST_STATUS = {json.dumps(initial_watchlist_status, ensure_ascii=False)};
     const INITIAL_STRONG_JOIN_STATUS = {json.dumps(initial_strong_join_status, ensure_ascii=False)};
     const INITIAL_MONTHLY_GOLD_LOGIC = {json.dumps(initial_monthly_gold_logic, ensure_ascii=False)};
+    const INITIAL_MONTHLY_GOLD_CODES = {json.dumps(initial_monthly_gold_codes, ensure_ascii=False)};
     const INITIAL_REPORT_ENTRIES = {json.dumps(initial_report_entries, ensure_ascii=False)};
     const INITIAL_SOCIAL_TRACKERS = {json.dumps(initial_social_trackers, ensure_ascii=False)};
     const INITIAL_SOCIAL_ENTRIES = {json.dumps(initial_social_entries, ensure_ascii=False)};
@@ -7550,6 +7649,19 @@ def build_html(
       return next;
     }}
 
+    function normalizeMonthlyGoldCodesPayload(payload) {{
+      if (!Array.isArray(payload)) return [];
+      const next = [];
+      const seen = new Set();
+      payload.forEach(value => {{
+        const code = String(value || '').trim().toUpperCase();
+        if (!/^\d{{6}}\.(?:SH|SZ|BJ)$/.test(code) || seen.has(code)) return;
+        seen.add(code);
+        next.push(code);
+      }});
+      return next.slice(0, 50);
+    }}
+
     function replaceObjectContents(target, source) {{
       Object.keys(target).forEach(key => delete target[key]);
       Object.entries(source).forEach(([key, value]) => {{
@@ -7787,6 +7899,7 @@ def build_html(
         watchlistStatus: normalizeWatchlistStatusPayload(watchlistStatusMap),
         strongJoinStatus: normalizeStrongJoinPayload(strongJoinMap),
         monthlyGoldLogic: normalizeMonthlyGoldLogicPayload(monthlyGoldLogicMap),
+        monthlyGoldCodes: normalizeMonthlyGoldCodesPayload(monthlyGoldCodes),
         reports: loadReportEntries(),
         socialKolWatchlist: loadSocialTrackers(),
         socialPosts: loadSocialEntries(),
@@ -7848,16 +7961,24 @@ def build_html(
       const nextWatchlistStatus = normalizeWatchlistStatusPayload(payload?.watchlistStatus || {{}});
       const nextStrongJoinStatus = normalizeStrongJoinPayload(payload?.strongJoinStatus || {{}});
       const nextMonthlyGoldLogic = normalizeMonthlyGoldLogicPayload(payload?.monthlyGoldLogic || {{}});
+      const hasMonthlyGoldCodes = Array.isArray(payload?.monthlyGoldCodes);
+      const nextMonthlyGoldCodes = hasMonthlyGoldCodes
+        ? normalizeMonthlyGoldCodesPayload(payload.monthlyGoldCodes)
+        : monthlyGoldCodes;
       const nextReports = mergeReportEntries([], Array.isArray(payload?.reports) ? payload.reports : []);
       const nextSocialKolWatchlist = mergeSocialTrackers([], Array.isArray(payload?.socialKolWatchlist) ? payload.socialKolWatchlist : []);
       const nextSocialPosts = mergeSocialEntries([], Array.isArray(payload?.socialPosts) ? payload.socialPosts : []);
       replaceObjectContents(watchlistStatusMap, nextWatchlistStatus);
       replaceObjectContents(strongJoinMap, nextStrongJoinStatus);
       replaceObjectContents(monthlyGoldLogicMap, nextMonthlyGoldLogic);
+      if (hasMonthlyGoldCodes) {{
+        monthlyGoldCodes.splice(0, monthlyGoldCodes.length, ...nextMonthlyGoldCodes);
+      }}
       saveWatchlistStatus(watchlistStatusMap);
       saveStrongJoinStatus(strongJoinMap);
       window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
-      syncMonthlyGoldLogicInputs();
+      window.localStorage.setItem(MONTHLY_GOLD_CODES_KEY, JSON.stringify(monthlyGoldCodes));
+      renderMonthlyGoldCustomRows();
       saveReportEntries(nextReports);
       saveSocialTrackers(nextSocialKolWatchlist);
       saveSocialEntries(nextSocialPosts);
@@ -8679,6 +8800,16 @@ def build_html(
 
     const watchlistStatusMap = loadWatchlistStatus();
     const strongJoinMap = loadStrongJoinStatus();
+    const baseMonthlyGoldCodeSet = new Set(monthlyGoldStocks.map(item => item.code));
+    let monthlyGoldCodes = normalizeMonthlyGoldCodesPayload(INITIAL_MONTHLY_GOLD_CODES);
+    try {{
+      monthlyGoldCodes = normalizeMonthlyGoldCodesPayload([
+        ...monthlyGoldCodes,
+        ...JSON.parse(window.localStorage.getItem(MONTHLY_GOLD_CODES_KEY) || '[]'),
+      ]);
+    }} catch (error) {{
+      monthlyGoldCodes = normalizeMonthlyGoldCodesPayload(INITIAL_MONTHLY_GOLD_CODES);
+    }}
     let monthlyGoldLogicMap = {{...INITIAL_MONTHLY_GOLD_LOGIC}};
     try {{
       monthlyGoldLogicMap = {{
@@ -8699,6 +8830,135 @@ def build_html(
         input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
         resizeCoreLogicInput(input);
       }});
+    }}
+
+    function bindCoreLogicInput(input) {{
+      if (input.dataset.boundCoreLogic === 'true') return;
+      input.dataset.boundCoreLogic = 'true';
+      input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
+      resizeCoreLogicInput(input);
+      input.addEventListener('input', () => {{
+        const value = input.value.trim();
+        if (value) monthlyGoldLogicMap[input.dataset.code] = value;
+        else delete monthlyGoldLogicMap[input.dataset.code];
+        window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
+        resizeCoreLogicInput(input);
+      }});
+      input.addEventListener('change', () => {{
+        queueDashboardStateSync(undefined, {{ promptForToken: true }});
+      }});
+    }}
+
+    function createMonthlyGoldRow(item) {{
+      const totalMarketCap = Number(item.totalMarketCap || 0);
+      const floatMarketCap = Number(item.floatMarketCap || 0);
+      const todayAmount = Number(item.todayAmount || 0);
+      const turnoverRate = item.turnoverRate == null ? null : Number(item.turnoverRate);
+      const todayPct = item.todayPct == null ? null : Number(item.todayPct);
+      const peRatio = item.peRatio == null ? null : Number(item.peRatio);
+      const totalCapText = totalMarketCap > 0 ? formatYi(totalMarketCap) : '-';
+      const floatCapText = floatMarketCap > 0 ? formatYi(floatMarketCap) : '-';
+      const amountText = todayAmount > 0 ? formatYiRmb(todayAmount) : '-';
+      const turnoverText = turnoverRate == null || Number.isNaN(turnoverRate) ? '-' : turnoverRate.toFixed(2) + '%';
+      const pctText = todayPct == null || Number.isNaN(todayPct) ? '-' : (todayPct >= 0 ? '+' : '') + todayPct.toFixed(2) + '%';
+      const peText = peRatio == null || Number.isNaN(peRatio) ? '暂无' : peRatio.toFixed(2);
+      const wrapper = document.createElement('tbody');
+      wrapper.innerHTML = `
+        <tr data-strong-stock-row="true" data-monthly-gold-custom="true" data-cap-group="${{capGroupKeyFromValue(totalMarketCap)}}" data-code="${{escapeHtml(item.code)}}" data-name="${{escapeHtml(item.name || item.code)}}" data-main-business="${{escapeHtml(item.mainBusiness || '-')}}" data-total-market-cap="${{totalMarketCap}}" data-float-market-cap="${{floatMarketCap}}" data-today-amount="${{todayAmount}}" data-turnover-rate="${{turnoverRate == null ? '' : turnoverRate}}" data-today-pct="${{todayPct == null ? '' : todayPct}}">
+          <td class="index-cell" data-index-cell="monthly-gold"></td>
+          <td data-search="${{escapeHtml(item.name || item.code)}} ${{escapeHtml(item.code)}}">
+            <button class="stock-trigger strong-stock-trigger" type="button" data-code="${{escapeHtml(item.code)}}">
+              <span class="stock-name">${{escapeHtml(item.name || item.code)}}</span>
+              <span class="stock-code">${{escapeHtml(item.code)}}</span>
+            </button>
+          </td>
+          <td>${{escapeHtml(item.mainBusiness || '-')}}</td>
+          <td class="nowrap-cell">${{totalCapText}} / ${{floatCapText}}</td>
+          <td class="nowrap-cell">${{amountText}}</td>
+          <td class="nowrap-cell">${{turnoverText}}</td>
+          <td class="${{pctClass(todayPct)}}">${{pctText}}</td>
+          <td class="nowrap-cell">${{peText}}</td>
+          <td><textarea class="core-logic-input" data-code="${{escapeHtml(item.code)}}" rows="2" aria-label="${{escapeHtml(item.name || item.code)}}核心逻辑" placeholder="输入核心逻辑"></textarea></td>
+        </tr>
+      `;
+      return wrapper.firstElementChild;
+    }}
+
+    function updateMonthlyGoldCount() {{
+      const count = monthlyGoldTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').length;
+      monthlyGoldCountPill.textContent = `共 ${{count}} 只`;
+    }}
+
+    function setMonthlyGoldActionNote(message, state = '') {{
+      monthlyGoldActionNote.textContent = message;
+      if (state) monthlyGoldActionNote.dataset.state = state;
+      else delete monthlyGoldActionNote.dataset.state;
+    }}
+
+    function renderMonthlyGoldCustomRows() {{
+      monthlyGoldTableBody.querySelectorAll('tr[data-monthly-gold-custom="true"]').forEach(row => row.remove());
+      monthlyGoldCodes.forEach(code => {{
+        if (baseMonthlyGoldCodeSet.has(code)) return;
+        const itemIndex = modalIndexByCode[code];
+        const item = itemIndex == null
+          ? {{ code, name: code, mainBusiness: '-' }}
+          : modalItems[itemIndex];
+        const row = createMonthlyGoldRow(item);
+        monthlyGoldTableBody.appendChild(row);
+        bindStrongStockRow(row);
+        bindCoreLogicInput(row.querySelector('.core-logic-input'));
+        const trigger = row.querySelector('.stock-trigger');
+        if (trigger && itemIndex != null) {{
+          trigger.addEventListener('click', event => {{
+            event.stopPropagation();
+            openStockModalByCode(code);
+          }});
+        }}
+      }});
+      syncMonthlyGoldLogicInputs();
+      renumberTableRows();
+      updateMonthlyGoldCount();
+    }}
+
+    async function addMonthlyGoldByName() {{
+      const stockName = String(monthlyGoldNameInput.value || '').trim();
+      if (!stockName) {{
+        setMonthlyGoldActionNote('请输入股票名称', 'error');
+        monthlyGoldNameInput.focus();
+        return;
+      }}
+      if (/^\d{{6}}(?:\.(?:SH|SZ|BJ))?$/i.test(stockName)) {{
+        setMonthlyGoldActionNote('这里请输入股票名称，不是代码', 'error');
+        monthlyGoldNameInput.select();
+        return;
+      }}
+      const code = modalCodeByAlias[normalizeModalAlias(stockName)];
+      const itemIndex = code == null ? null : modalIndexByCode[code];
+      const item = itemIndex == null ? null : modalItems[itemIndex];
+      if (!code || !item) {{
+        setMonthlyGoldActionNote('未找到该股票，请输入完整股票名称', 'error');
+        monthlyGoldNameInput.select();
+        return;
+      }}
+      if (baseMonthlyGoldCodeSet.has(code) || monthlyGoldCodes.includes(code)) {{
+        setMonthlyGoldActionNote(`${{item.name}}已在当月金股中`, 'error');
+        monthlyGoldNameInput.select();
+        return;
+      }}
+      monthlyGoldCodes.push(code);
+      window.localStorage.setItem(MONTHLY_GOLD_CODES_KEY, JSON.stringify(monthlyGoldCodes));
+      renderMonthlyGoldCustomRows();
+      monthlyGoldNameInput.value = '';
+      setMonthlyGoldActionNote(`已添加：${{item.name}}`, 'success');
+      monthlyGoldAddButton.disabled = true;
+      try {{
+        const saved = await queueDashboardStateSync(undefined, {{ promptForToken: true }});
+        if (Array.isArray(saved?.monthlyGoldCodes) && saved.monthlyGoldCodes.includes(code)) {{
+          setMonthlyGoldActionNote(`已添加并保存：${{item.name}}`, 'success');
+        }}
+      }} finally {{
+        monthlyGoldAddButton.disabled = false;
+      }}
     }}
 
     document.querySelectorAll('.stock-trigger').forEach(node => {{
@@ -8723,19 +8983,13 @@ def build_html(
     watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]').forEach(bindWatchlistRow);
     strongStocksTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(bindStrongStockRow);
     monthlyGoldTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(bindStrongStockRow);
-    monthlyGoldTableBody.querySelectorAll('.core-logic-input').forEach(input => {{
-      input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
-      resizeCoreLogicInput(input);
-      input.addEventListener('input', () => {{
-        const value = input.value.trim();
-        if (value) monthlyGoldLogicMap[input.dataset.code] = value;
-        else delete monthlyGoldLogicMap[input.dataset.code];
-        window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
-        resizeCoreLogicInput(input);
-      }});
-      input.addEventListener('change', () => {{
-        queueDashboardStateSync(undefined, {{ promptForToken: true }});
-      }});
+    monthlyGoldTableBody.querySelectorAll('.core-logic-input').forEach(bindCoreLogicInput);
+    renderMonthlyGoldCustomRows();
+    monthlyGoldAddButton.addEventListener('click', addMonthlyGoldByName);
+    monthlyGoldNameInput.addEventListener('keydown', event => {{
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      addMonthlyGoldByName();
     }});
 
     document.querySelectorAll('.join-watchlist-select').forEach(select => {{

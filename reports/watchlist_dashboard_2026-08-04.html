@@ -765,6 +765,55 @@
       padding: 4px 8px;
       font-size: 10px;
     }
+    .monthly-gold-head-actions,
+    .monthly-gold-add-control {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .monthly-gold-section-head {
+      align-items: flex-start;
+    }
+    .monthly-gold-head-actions {
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .monthly-gold-name-input {
+      width: 168px;
+      border: 1px solid rgba(83,242,229,0.16);
+      background: rgba(83,242,229,0.06);
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 12px;
+      outline: none;
+    }
+    .monthly-gold-name-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(15,118,110,0.10);
+    }
+    .monthly-gold-add-button {
+      border: 1px solid rgba(15,118,110,0.20);
+      background: rgba(15,118,110,0.12);
+      color: var(--accent);
+      border-radius: 6px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .monthly-gold-action-note {
+      max-width: 190px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .monthly-gold-action-note[data-state="success"] {
+      color: var(--accent);
+    }
+    .monthly-gold-action-note[data-state="error"] {
+      color: var(--danger);
+    }
     .summary-table {
       width: 100%;
       border-collapse: collapse;
@@ -776,6 +825,41 @@
       text-align: left;
       border-bottom: 1px solid rgba(83,242,229,0.08);
       vertical-align: middle;
+    }
+    .monthly-gold-table {
+      min-width: 1420px;
+      table-layout: fixed;
+    }
+    .monthly-gold-table th,
+    .monthly-gold-table td {
+      padding-left: 5px;
+      padding-right: 5px;
+    }
+    .monthly-gold-table th:nth-child(1),
+    .monthly-gold-table td:nth-child(1) { width: 40px; }
+    .monthly-gold-table th:nth-child(2),
+    .monthly-gold-table td:nth-child(2) { width: 108px; }
+    .monthly-gold-table th:nth-child(3),
+    .monthly-gold-table td:nth-child(3) { width: 150px; }
+    .monthly-gold-table th:nth-child(4),
+    .monthly-gold-table td:nth-child(4) { width: 145px; }
+    .monthly-gold-table th:nth-child(5),
+    .monthly-gold-table td:nth-child(5) { width: 90px; }
+    .monthly-gold-table th:nth-child(6),
+    .monthly-gold-table td:nth-child(6) { width: 66px; }
+    .monthly-gold-table th:nth-child(7),
+    .monthly-gold-table td:nth-child(7) { width: 70px; }
+    .monthly-gold-table th:nth-child(8),
+    .monthly-gold-table td:nth-child(8) { width: 58px; }
+    .monthly-gold-table th:nth-child(9),
+    .monthly-gold-table td:nth-child(9) {
+      width: 46%;
+      min-width: 520px;
+    }
+    .monthly-gold-table .core-logic-input {
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
     }
     .index-cell {
       width: 38px;
@@ -2476,15 +2560,22 @@
         </tbody>
       </table>
     </section>
-    <div class="section-head compact-section-head">
+    <div class="section-head compact-section-head monthly-gold-section-head">
       <div>
         <h2>当月金股</h2>
         <p>按行业分类排序</p>
       </div>
-      <span class="pill">共 8 只</span>
+      <div class="monthly-gold-head-actions">
+        <div class="monthly-gold-add-control">
+          <input id="monthly-gold-name-input" class="monthly-gold-name-input" type="text" placeholder="输入股票名称" aria-label="新增当月金股股票名称" />
+          <button id="monthly-gold-add-button" class="monthly-gold-add-button" type="button">添加</button>
+        </div>
+        <span id="monthly-gold-action-note" class="monthly-gold-action-note"></span>
+        <span id="monthly-gold-count-pill" class="pill">共 8 只</span>
+      </div>
     </div>
     <section class="summary-table-wrap compact-table-wrap">
-      <table class="summary-table">
+      <table class="summary-table monthly-gold-table">
         <thead>
 
           <tr>
@@ -12747,6 +12838,10 @@
     const socialActionNote = document.getElementById('social-action-note');
     const strongStocksTableBody = document.getElementById('strong-stocks-table-body');
     const monthlyGoldTableBody = document.getElementById('monthly-gold-table-body');
+    const monthlyGoldNameInput = document.getElementById('monthly-gold-name-input');
+    const monthlyGoldAddButton = document.getElementById('monthly-gold-add-button');
+    const monthlyGoldActionNote = document.getElementById('monthly-gold-action-note');
+    const monthlyGoldCountPill = document.getElementById('monthly-gold-count-pill');
     const watchlistTableBody = document.getElementById('watchlist-table-body');
     const stockExposureTableBody = document.getElementById('stock-exposure-table-body');
     const removedPanel = document.getElementById('removed-panel');
@@ -12790,9 +12885,11 @@
     const DASHBOARD_ANALYZE_API_KEY = 'astock_dashboard_analyze_api_url_v1';
     const REPORT_HIDDEN_IDS_KEY = 'astock_report_hidden_ids_v1';
     const MONTHLY_GOLD_LOGIC_KEY = 'astock_monthly_gold_logic_v1';
+    const MONTHLY_GOLD_CODES_KEY = 'astock_monthly_gold_codes_v1';
     const INITIAL_WATCHLIST_STATUS = {"002730.SZ": "removed", "688307.SH": "removed", "601908.SH": "removed", "301312.SZ": "removed", "600072.SH": "removed", "603629.SH": "removed", "300812.SZ": "removed", "000815.SZ": "removed", "688582.SH": "removed", "600666.SH": "removed", "002518.SZ": "removed", "301486.SZ": "removed", "300383.SZ": "removed", "603061.SH": "removed", "301396.SZ": "removed", "600410.SH": "removed", "002202.SZ": "removed", "300857.SZ": "removed", "300136.SZ": "removed", "300124.SZ": "removed", "000977.SZ": "removed"};
     const INITIAL_STRONG_JOIN_STATUS = {};
-    const INITIAL_MONTHLY_GOLD_LOGIC = {};
+    const INITIAL_MONTHLY_GOLD_LOGIC = {"600276.SH": "创新药行业六月底至七月份行情持续性超预期，基本面内需（商业化放量）和外需（出海 BD）均有明确超预期事件\n估值水平：当前约 35 倍 PE，明年不到 30 倍，主要反映国内创新药放量（今年增长20%-26%-30%，明年进一步提速）。历史估值约 50 倍，海外大药价值被低估。\n海外大药重塑估值：预计今年年底恒瑞海外合作大药至少 9 项三期启动，明年年中接近 20 项三期，覆盖约 7-8 个品种，合计销售峰值中性偏保守约200-300 亿美金（约为科伦博泰海外品种的两倍）。\n结论：未来半年到一年，恒瑞海外估值将从零起步充分释放，预计有50%以上上涨空间"};
+    const INITIAL_MONTHLY_GOLD_CODES = [];
     const INITIAL_REPORT_ENTRIES = [{"id": "report-1", "target": "澜起科技", "targets": ["澜起科技"], "targetCodes": ["688008.SH"], "content": "test", "summary": "test", "industry": "半导体芯片", "rawText": "test", "date": "2026-06-09", "createdAt": 1781002020707}, {"id": "report-1781146192409", "target": "PCB", "targets": ["PCB"], "targetCodes": [], "content": "三季度关注PCB产业两个升级（rubin放量带动HVLP3-4超预期、国产化表处理加速）和一个涨价趋势。铜冠铜箔HVLP4良率提升至5成并进入批产；海亮股份预计26Q3 HVLP小批量，27年利润确定性增强；泰金新能受益于国产化表处理加速。", "summary": "三季度关注PCB产业两个升级（rubin放量带动HVLP3-4超预期、国产化表处理加速）和一个涨价趋势。铜冠铜箔HVLP4良率提升至5成并进入批产；海亮股份预计26Q3 HVLP小批量，27年利润确定性增强；泰金新能受益于国产化表处理加速。", "industry": "PCB/高端铜箔", "rawText": "PCB——三季度关注两个升级，和一个涨价趋势\n✅产业趋势一：rubin放量——hvlp3-4超预期。这里我们看到三个公司变化最大：\n第一，【铜冠铜箔】预计hvlp4良率从原来2-3成提高至5成，且二季度正式进入批产阶段，我们预计三季度良率能再上台阶。\n\n第二，❗️【海亮股份】之前PCB只有标箔，预计26Q3 hvlp正式对台光、台耀小批量。更重要的是27年40亿+利润确定性增强，当前11X PE。后续还将关注：海亮海外基地对胜宏科技等头部客户的赋能。\n\n第三，在调研这些企业时，同步发现国产化表处理加速（太卡脖子），【泰金新能】，后续还将关注：国内头部高端铜箔和表处理供应商的长期合作。", "date": "2025Q3", "createdAt": 1781146192409}, {"id": "report-1781263606337", "target": "迈为股份", "targets": ["迈为股份"], "targetCodes": ["300751.SZ"], "content": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力，因钼替代钨成为3D NAND趋势，迈为设备在国内领先。", "summary": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力，因钼替代钨成为3D NAND趋势，迈为设备在国内领先。", "industry": "半导体设备", "rawText": "看好迈为股份的钼基薄膜沉积设备在下一代存储领域的成长潜力！\n       据外媒报道，SK海力士已完成375层3D NAND 闪存的生产验证工作，该产品计划在今年年底前正式量产。此次迭代最大的技术亮点，在于使用钼材料替代传统钨材料制作字线。字线（Word Line） 是连接存储单元控制栅极的水平控制线，主要用于选择和操作特定行的存储单元。随着3D NAND堆叠层数愈多，传统钨材质短板凸显：线路细化后钨的电阻会显著上升，拖慢信号传输速率。同时钨在制程中还需要额外铺设阻挡辅助层，逐层叠加后会挤占空间、影响芯片集成密度。比较而言，在同等微缩尺寸下，钼的电阻更低，能够有效加快数据读写速度。且钼无需额外增设阻挡层，可直接完成填充，进一步提升芯片存储密度。\n       钼前驱体在常温下为固态，生产时必须借助专用设备进行高温加热，同时把控物料的供给量与输送速率，对设备和制程管控要求严苛。SK海力士选择采购东京电子（TEL）的设备。东电的炉式设备可一次性完成约100片晶圆的沉积作业，在设备采购成本、场地占用以及钼物料消耗上更具性价比。从行业层面来看，三星电子已率先落地钼材料工艺。该公司自2024年4月起量产286层第九代3D NAND，就已将钼应用在金属布线环节；未来在下一代存储方向上，以钼带钨成为大势所趋。\n       迈为在半导体设备布局中，前瞻布局钼基薄膜沉积设备，在国内具备行业领先水平，未来随着钼基技术的普及放量，迈为在存储设备领域有望弯道超车，大幅加速公司在半导体设备领域的成长空间，我们持续看好推荐", "date": "2026-06-11", "createdAt": 1781263606337}, {"id": "report-1781353016209", "target": "中钨高新", "targets": ["中钨高新", "鼎泰高科", "厦门钨业"], "targetCodes": ["000657.SZ", "301377.SZ", "600549.SH"], "content": "钨价上涨且头部企业认可，供需再平衡；新兴赛道需求爆发，重点关注PCB钻针及棒材；推荐中钨高新、鼎泰高科、厦门钨业等。", "summary": "钨价上涨且头部企业认可，供需再平衡；新兴赛道需求爆发，重点关注PCB钻针及棒材；推荐中钨高新、鼎泰高科、厦门钨业等。", "industry": "钨", "rawText": "6月12日，黑钨精矿报价52.5万元/吨，较年初涨14.1%；APT报价80万元/吨，较年初涨19.4%；碳化钨粉报价1230元/kg，较年初涨18.3%\n\n大型钨企6月上半月长单价与市场基本持平，释放出头部企业对当前价格水平的认可。钨市场已逐步过渡到供需再平衡和理性博弈阶段。矿山惜售构成价格支撑，中游稳价经营、控制风险，下游逐步恢复采购节奏。我国关键矿产资源优势所带来的产业影响力正在持续显现\n\n6月新一轮补库开始➕新兴赛道需求爆发，【光伏钨丝】+【六氟化钨】+【PCB钻针】（务必重视钻针放量带来的棒材需求！），还有mlcc用重稀土加持\n\n玫瑰【中钨高新】资源+科技共舞\n钨矿：体内钨矿年产能1.1万吨，受益于钨矿价格企稳回升。五矿旗下三家矿山待注入\nPCB钻针：子公司金洲精工国内PCB钻针龙头，年内四度扩产，累计新增近5亿支产能，看好Vera Rubin量产带动金洲高端AI PCB钻针量价利释放\n棒材：子公司株硬超细碳化钨粉技术提升+AI PCB棒材技改提升，助力PCB钻针棒材自制率提升\n\n玫瑰【鼎泰高科】主打锐度\n#产能扩张加速：公司订单-产能缺口持续 放大，扩产节奏已加速至每月新增1kw支，且内部在推进更快速的扩产目标，Q3月产有望超2e支，打开销量及收入空间\n#高端产品占比提升，均价持续提升：   Q1涂层产品占比超50%，且仍在持续提升； Q1钻针均价1.47元，环比25Q4提升明显；高长径比产品已实现月度批量出货，Q3占比有望快速提升，拉动钻针均价继续向上\n\n玫瑰【厦门钨业】布局全面\n钨矿：体内钨矿年产能1.2万吨，受益于钨矿价格企稳回升。已完成九江大地收购，正推进大湖塘钨矿部分股权受让\n棒材：高品质自供原料和先进工艺，可生产PCB钻针棒材，市场份额领先。rubin量产拉动下，近期需求上量明显\nMLCC原材料：子公司贝思科，主营MLCC用高端纳米钛酸钡及配方粉、高性能纳米碳酸钡等先进电子材料，#年产3000吨钛酸钡及配方粉、年产5 000吨碳酸钡生产线。子公司金龙稀土有氧化镝产品，可应用于高容MLCC生产\n\n钻针#新锐民爆欧科亿   也继续看好", "date": "2025-06-12", "createdAt": 1781353016209}, {"id": "report-1781929729081", "target": "华峰测控", "targets": ["华峰测控", "长川科技", "联动科技", "精智达", "金海通", "强一股份"], "targetCodes": ["688200.SH", "300604.SZ", "688627.SH", "603061.SH", "688809.SH"], "content": "AI带动后道测试设备量价齐升，2025年全球后道测试设备销售额大增55%，国产替代空间巨大；国内ATE公司合计收入仅80亿，而海外巨头爱德万、泰瑞达收入超百亿。重点标的包括华峰测控、长川科技、联动科技、精智达、金海通、强一股份等，各公司在模拟/SOC、功率、存储、分选机、探针卡等细分领域具备突破潜力。", "summary": "AI带动后道测试设备量价齐升，2025年全球后道测试设备销售额大增55%，国产替代空间巨大；国内ATE公司合计收入仅80亿，而海外巨头爱德万、泰瑞达收入超百亿。重点标的包括华峰测控、长川科技、联动科技、精智达、金海通、强一股份等，各公司在模拟/SOC、功率、存储、分选机、探针卡等细分领域具备突破潜力。", "industry": "半导体测试设备", "rawText": "强烈推荐半导体测试设备：AI推动市场翻倍，国产替代加速\n\nAI带动半导体设备需求快速增长，后道测试设备量价齐升。根据SEMI报告，2025年全球半导体制造设备销售额达1351亿美元，同比增长15%，细分来看，前段晶圆制程设备增长12%，后道测试设备大增55%，AI对后道设备拉动更显著，原因是芯片复杂化使得测试要求提升、测试内容变多、测试时间变长，导致测试设备量提升；\n\n测试设备需求上看，中国大陆、中国台湾、韩国合计占全球79%，未来市场增量看中国；供应格局上看：爱德万、泰瑞达占全球份额的80%以上，爱德万25年收入接近500亿，27年预计达到800亿；泰瑞达25年收入220亿，27年预计达到400亿，中国4家上市ATE公司25年合计收入仅80亿；国产替代空间巨大；\n\n华峰测控：模拟国内第一，SoC今年有望实现订单0到1的突破。STS8600系列则面向高性能SOC芯片测试，包括人工智能（AI）、高性能计算（HPC）及汽车电子等，市场空间是模拟测试机4-6倍，8600已经通过算力相关客户验证；\n\n长川科技：深度绑定H客户，显著受益于爱德万断供。公司产品布局最全，测试机覆盖模拟、数字、SoC、功率，是目前SoC量产的唯一国内品牌，后续受益于H客户AI芯片放量及两存扩产，同时收购新加坡STI是北美头部X公司供应商；\n\n联动科技：功率芯片测试机龙头，延伸至SoC领域。公司从功率半导体测试机起家，覆盖全球主流功率器件公司，新推出SoC测试机9800面向AI、大算力市场，有望打破海外垄断，与天数智芯战略合作；\n\n精智达：存储测试设备龙头，深度绑定CX。国内唯一DRAM全流程测试（CP+老化+ FT）厂商，HBM高速CP测试机全球领先，进入一线大厂供应链，受益于两存扩产；\n\n金海通：国内平移式分选机龙头，三重需求爆发。“AI +车规+存储”高景气共振，AI芯片尺寸更大、更复杂，测试时长增加导致分选机环节通胀，拉动分选机市场翻倍以上增长，国内竞争格局更优；\n\n强一股份：全球第六、唯一内资探针卡龙头，AI 算力/存储高景气。MEMS探针卡“卡脖子”突破，全链条自主可控，AI算力+存储测试双轮驱动，测试时长是原来3-5倍，探针卡量价齐升。强烈推荐半导体测试设备：AI推动市场翻倍，国产替代加速-0617\n\nAI带动半导体设备需求快速增长，后道测试设备量价齐升。根据SEMI报告，2025年全球半导体制造设备销售额达1351亿美元，同比增长15%，细分来看，前段晶圆制程设备增长12%，后道测试设备大增55%，AI对后道设备拉动更显著，原因是芯片复杂化使得测试要求提升、测试内容变多、测试时间变长，导致测试设备量提升；\n\n测试设备需求上看，中国大陆、中国台湾、韩国合计占全球79%，未来市场增量看中国；供应格局上看：爱德万、泰瑞达占全球份额的80%以上，爱德万25年收入接近500亿，27年预计达到800亿；泰瑞达25年收入220亿，27年预计达到400亿，中国4家上市ATE公司25年合计收入仅80亿；国产替代空间巨大；\n\n华峰测控：模拟国内第一，SoC今年有望实现订单0到1的突破。STS8600系列则面向高性能SOC芯片测试，包括人工智能（AI）、高性能计算（HPC）及汽车电子等，市场空间是模拟测试机4-6倍，8600已经通过算力相关客户验证；\n\n长川科技：深度绑定H客户，显著受益于爱德万断供。公司产品布局最全，测试机覆盖模拟、数字、SoC、功率，是目前SoC量产的唯一国内品牌，后续受益于H客户AI芯片放量及两存扩产，同时收购新加坡STI是北美头部X公司供应商；\n\n联动科技：功率芯片测试机龙头，延伸至SoC领域。公司从功率半导体测试机起家，覆盖全球主流功率器件公司，新推出SoC测试机9800面向AI、大算力市场，有望打破海外垄断，与天数智芯战略合作；\n\n精智达：存储测试设备龙头，深度绑定CX。国内唯一DRAM全流程测试（CP+老化+ FT）厂商，HBM高速CP测试机全球领先，进入一线大厂供应链，受益于两存扩产；\n\n金海通：国内平移式分选机龙头，三重需求爆发。“AI +车规+存储”高景气共振，AI芯片尺寸更大、更复杂，测试时长增加导致分选机环节通胀，拉动分选机市场翻倍以上增长，国内竞争格局更优；\n\n强一股份：全球第六、唯一内资探针卡龙头，AI 算力/存储高景气。MEMS探针卡“卡脖子”突破，全链条自主可控，AI算力+存储测试双轮驱动，测试时长是原来3-5倍，探针卡量价齐升。", "date": "2026-06-19", "createdAt": 1781929729081}, {"id": "report-1782037346277", "target": "", "targets": [], "targetCodes": [], "content": "国内功率IDM龙头，营收高增确定性强，多赛道共振；产能利用率修复，涨价效应二季度体现；碳化硅第二增长曲线明确，AI算力增量可观；当前估值显著低于同业，重资产价值未充分定价，具备较强估值修复空间。", "summary": "国内功率IDM龙头，营收高增确定性强，多赛道共振；产能利用率修复，涨价效应二季度体现；碳化硅第二增长曲线明确，AI算力增量可观；当前估值显著低于同业，重资产价值未充分定价，具备较强估值修复空间。", "industry": "功率半导体", "rawText": "为什么我们强烈推荐士兰微？\n\n国内功率IDM龙头，预计Q2业绩将明确兑现，全年景气确定性拉满，目前是PB/前期涨幅最低的功率半导体/IDM 0621\n \n1️⃣ 营收高增确定性强：公司Q1淡季增速近20%，Q2白电、光储集中放量，单季有望明显在此基础上提速:分板块看，白电稳健增长20-30%，光储赛道爆发增速50%+，海外客户翻倍增长，AI算力业务将至少实现100-200%增长，多赛道共振向上。\n\n2️⃣产能利用率持续修复，涨价效果将在二季度体现：功率器件二季度产能利用率抬升至90%+，较一季度60%以内显著改善。产品分层涨价，全客户综合提价7%-8%（小客户提价超15%），完全覆盖原材料上涨压力，盈利同步改善。\n\n3️⃣碳化硅第二增长曲线明确：当前月出货3000-4000片；年底月出货目标8000片，全年碳化硅收入有望做到10亿。产品覆盖650V-2300V全电压平台，光伏、充电桩快速起量，同步切入AIDC服务器PSU/HVDC/SST电源，长期成长空间打开，后续爬坡提速可期。\n\n4️⃣AI算力业务增量可观：AIDC器件单月营收持续翻倍增长；当前主攻国内浪潮、新华三供应链，持续攻坚G、Meta海外白名单，IDM自有产线+车规可靠性认证形成核心壁垒，Fabless厂商难以追赶。￥考虑厦门产线A客户的drmos、硅光代工等期权，公司空间＋壁垒更高\n\n❗️估值显著低估：公司全品类IDM布局，功率、碳化硅产能储备充足，业务体量远超同业，当前600多亿市值，PB仅为5，估值显著低于芯联、杰华特等同业，重资产价值未充分定价，叠加二季度业绩高增催化，具备较强估值修复空间，重点推荐", "date": "2026-06-21", "createdAt": 1782037346277}, {"id": "report-1782037771317", "target": "", "targets": [], "targetCodes": [], "content": "士兰微作为国内功率IDM龙头，Q2业绩预计明确兑现，营收高增确定性强；产能利用率修复至90%+，涨价效应将在二季度体现；碳化硅第二增长曲线明确，全年收入有望达10亿元；AI算力业务增量可观，IDM模式形成核心壁垒；当前PB仅5，估值显著低于同业，具备较强修复空间。", "summary": "士兰微作为国内功率IDM龙头，Q2业绩预计明确兑现，营收高增确定性强；产能利用率修复至90%+，涨价效应将在二季度体现；碳化硅第二增长曲线明确，全年收入有望达10亿元；AI算力业务增量可观，IDM模式形成核心壁垒；当前PB仅5，估值显著低于同业，具备较强修复空间。", "industry": "功率半导体", "rawText": "为什么我们强烈推荐士兰微？\n\n国内功率IDM龙头，预计Q2业绩将明确兑现，全年景气确定性拉满，目前是PB/前期涨幅最低的功率半导体/IDM 0621\n \n1️⃣ 营收高增确定性强：公司Q1淡季增速近20%，Q2白电、光储集中放量，单季有望明显在此基础上提速:分板块看，白电稳健增长20-30%，光储赛道爆发增速50%+，海外客户翻倍增长，AI算力业务将至少实现100-200%增长，多赛道共振向上。\n\n2️⃣产能利用率持续修复，涨价效果将在二季度体现：功率器件二季度产能利用率抬升至90%+，较一季度60%以内显著改善。产品分层涨价，全客户综合提价7%-8%（小客户提价超15%），完全覆盖原材料上涨压力，盈利同步改善。\n\n3️⃣碳化硅第二增长曲线明确：当前月出货3000-4000片；年底月出货目标8000片，全年碳化硅收入有望做到10亿。产品覆盖650V-2300V全电压平台，光伏、充电桩快速起量，同步切入AIDC服务器PSU/HVDC/SST电源，长期成长空间打开，后续爬坡提速可期。\n\n4️⃣AI算力业务增量可观：AIDC器件单月营收持续翻倍增长；当前主攻国内浪潮、新华三供应链，持续攻坚G、Meta海外白名单，IDM自有产线+车规可靠性认证形成核心壁垒，Fabless厂商难以追赶。￥考虑厦门产线A客户的drmos、硅光代工等期权，公司空间＋壁垒更高\n\n❗️估值显著低估：公司全品类IDM布局，功率、碳化硅产能储备充足，业务体量远超同业，当前600多亿市值，PB仅为5，估值显著低于芯联、杰华特等同业，重资产价值未充分定价，叠加二季度业绩高增催化，具备较强估值修复空间，重点推荐", "date": "2026-06-21", "createdAt": 1782037771317}, {"id": "report-1782037849473", "target": "云南锗业", "targets": ["云南锗业", "光智科技", "博杰股份", "兴发集团", "兴福电子", "驰宏锌锗"], "targetCodes": ["002428.SZ", "300489.SZ", "600141.SH", "688545.SH"], "content": "中国海关加强对铟出口审查，可能为管制前兆。铟是磷化铟核心原料，磷化铟已管制，若铟跟进则海外全链条受限。美国计划三年战略储备403吨铟，全球半年消耗量。AI算力拉动铟需求，2026年光模块增量需求31.5吨。关注国内磷化铟全产业链。", "summary": "中国海关加强对铟出口审查，可能为管制前兆。铟是磷化铟核心原料，磷化铟已管制，若铟跟进则海外全链条受限。美国计划三年战略储备403吨铟，全球半年消耗量。AI算力拉动铟需求，2026年光模块增量需求31.5吨。关注国内磷化铟全产业链。", "industry": "有色金属", "rawText": "路透社6月19日独家报道，中国海关正加强对铟出口的审查力度。今年首次出现欧洲买家被要求披露终端用户信息及所在地的情况，北美买家的审批时间从当日办结延长至数天。尽管金属铟尚未被正式列入出口管制清单，但多位买家向路透社表示担忧，认为这是\"出口限制或彻底禁令的前兆\"。\n\n1️⃣中国生产全球近70%的铟，7N高纯铟提纯产能100%在国内。 铟是锌冶炼副产品，无独立矿产，全球原生铟年产量约880吨，中国610吨（USGS）。海外无规模化替代产能，再生铟纯度最高仅4N，无法满足6英寸磷化铟衬底7N高纯原料要求。\n\n2️⃣铟是磷化铟的核心原料，磷化铟是AI数据中心高速光芯片不可替代的衬底材料。 2025年2月磷化铟被纳入出口管制清单后，Coherent CEO随特朗普访华专门提出这一问题（路透社6月11日报道）。如果金属铟再跟进管制，海外厂商将从原料到衬底到外延片全链条受限。\n\n3️⃣美国已经开始抢货。 美国国防后勤局今年发布征求建议书，计划三年内战略储备403吨金属铟——对应全球半年的高纯铟总消耗量。北美、欧洲光通信、显示厂商主动加大锁货备货。\n\n4️⃣AI算力需求拉动铟消费爆发。 单片6英寸InP衬底消耗高纯铟0.72克（Yole）。2026年全球800G/1.6T光模块对应高纯铟增量需求31.5吨，同比增长142%。CPO架构全面落地后，单算力机柜InP用量将再提升3倍。\n\n❗️中国掌握铟的资源端和高纯提纯端，管制路径已在磷化铟上完成验证。国内磷化铟产业链供应链安全性显著优于海外竞争对手，建议关注磷化铟全产业链：\n\n磷化铟衬底厂商：\n云南锗业、光智科技、博杰股份 \n上游物料：\n兴发集团、兴福电子、驰宏锌锗", "date": "2025-06-19", "createdAt": 1782037849473}, {"id": "report-1782037883530", "target": "云南锗业", "targets": ["云南锗业", "光智科技", "博杰股份", "兴发集团", "兴福电子", "驰宏锌锗"], "targetCodes": ["002428.SZ", "300489.SZ", "600141.SH", "688545.SH"], "content": "中国海关加强对铟出口审查，可能为出口管制前兆；铟是磷化铟核心原料，AI数据中心光模块需求拉动消费爆发；美国开始战略储备铟；国内磷化铟产业链供应链优势显著。", "summary": "中国海关加强对铟出口审查，可能为出口管制前兆；铟是磷化铟核心原料，AI数据中心光模块需求拉动消费爆发；美国开始战略储备铟；国内磷化铟产业链供应链优势显著。", "industry": "有色金属", "rawText": "路透社6月19日独家报道，中国海关正加强对铟出口的审查力度。今年首次出现欧洲买家被要求披露终端用户信息及所在地的情况，北美买家的审批时间从当日办结延长至数天。尽管金属铟尚未被正式列入出口管制清单，但多位买家向路透社表示担忧，认为这是\"出口限制或彻底禁令的前兆\"。\n\n1️⃣中国生产全球近70%的铟，7N高纯铟提纯产能100%在国内。 铟是锌冶炼副产品，无独立矿产，全球原生铟年产量约880吨，中国610吨（USGS）。海外无规模化替代产能，再生铟纯度最高仅4N，无法满足6英寸磷化铟衬底7N高纯原料要求。\n\n2️⃣铟是磷化铟的核心原料，磷化铟是AI数据中心高速光芯片不可替代的衬底材料。 2025年2月磷化铟被纳入出口管制清单后，Coherent CEO随特朗普访华专门提出这一问题（路透社6月11日报道）。如果金属铟再跟进管制，海外厂商将从原料到衬底到外延片全链条受限。\n\n3️⃣美国已经开始抢货。 美国国防后勤局今年发布征求建议书，计划三年内战略储备403吨金属铟——对应全球半年的高纯铟总消耗量。北美、欧洲光通信、显示厂商主动加大锁货备货。\n\n4️⃣AI算力需求拉动铟消费爆发。 单片6英寸InP衬底消耗高纯铟0.72克（Yole）。2026年全球800G/1.6T光模块对应高纯铟增量需求31.5吨，同比增长142%。CPO架构全面落地后，单算力机柜InP用量将再提升3倍。\n\n❗️中国掌握铟的资源端和高纯提纯端，管制路径已在磷化铟上完成验证。国内磷化铟产业链供应链安全性显著优于海外竞争对手，建议关注磷化铟全产业链：\n\n磷化铟衬底厂商：\n云南锗业、光智科技、博杰股份 \n上游物料：\n兴发集团、兴福电子、驰宏锌锗", "date": "2025-06-19", "createdAt": 1782037883530}, {"id": "report-1782037990567", "target": "长川科技", "targets": ["长川科技", "华峰测控", "精智达"], "targetCodes": ["300604.SZ", "688200.SH", "688627.SH"], "content": "测试设备龙头长川科技经历周期波动后重回增长，华峰测控模拟测试龙头向数字测试突破，精智达存储测试机深度绑定DRAM龙头，2026年将迎来业绩兑现。", "summary": "测试设备龙头长川科技经历周期波动后重回增长，华峰测控模拟测试龙头向数字测试突破，精智达存储测试机深度绑定DRAM龙头，2026年将迎来业绩兑现。", "industry": "半导体测试设备", "rawText": "- 长川科技：当之无愧的测试设备龙头，18-22年靠着深度配合H客户，实现了数字测试机的放量，估值高峰给过50-100xPE；22-25年，周期的下行+初代高端测试机突破后必然的磨合阶段，业绩有所波动，估值最低给过20xPE；25年至今，全球测试板块的beta+自身高端测试机的迭代+业绩放量，重回龙头宝座，估值与产业地位将于全球龙头对齐；\n\n- 华峰测控：模拟测试机龙头，足够大的份额导致了其历史上的业绩与估值与IC设计板块高度趋同，数字测试机经历了过去八年的研发投入，也将迎来首次的突破，产业意义重大，而且公司凭借着稳健的历史业绩和超优质的财务数据，形成了自己的粉丝圈，估值中枢长期在50-70xPE；\n\n- 精智达：存储测试机标签最强的公司，纵观19年至今的材料设备国产化趋势，深度绑定头部客户，是实现设备突破和业务突破的关键所在，精智达靠着与Dram龙头的全面绑定，实现了存储设备的快速突破，而且2026年将会是其从“CX概念股”向“CX业绩股”切换的一年，接下来重点客户的“订单规模&订单结构”将会显著提振市场对于其高端测试设备的发展信心，从而关注到他在其他关键客户和关键领域的业务进展", "date": "2026-06-21", "createdAt": 1782037990567}, {"id": "report-1782038127873", "target": "", "targets": [], "targetCodes": [], "content": "超级电容炭订单受AI高密电源项目推动，下半年增速预计指数级拉升；千吨级产线满产，紧急扩产应对海外放量；超级电容稳压炭国内唯一量产，绑定江海股份卡位英伟达需求；硬碳负极百吨级中试线反馈好，Q3完成验证年底量产；收购福建同晟拓展高端球形硅微粉业务。", "summary": "超级电容炭订单受AI高密电源项目推动，下半年增速预计指数级拉升；千吨级产线满产，紧急扩产应对海外放量；超级电容稳压炭国内唯一量产，绑定江海股份卡位英伟达需求；硬碳负极百吨级中试线反馈好，Q3完成验证年底量产；收购福建同晟拓展高端球形硅微粉业务。", "industry": "超级电容", "rawText": "元力股份】调研核心内容速递\n\n#订单：    超级电容炭Q2订单跟进极速，下半年随着下游AI高密电源（800V HVDC）项目密集落地，总体增速预计呈现指数级拉升。\n#产能：    目前千吨级超级电容炭产线运转极度饱满。为应对四季度海外AI顶级机柜潜在的放量暴增，紧急排产与扩产预案已全面提上日程。\n\n#核心产品进展：   \n1）超级电容稳压炭：作为国内唯一破局量产标的，目前深度绑定江海股份等核心中游，全面卡位英伟达等头部算力大厂的瞬间稳压刚需。\n2）硬碳负极材料：百吨级中试线下游反馈极佳，预计Q3完成头部电池厂长稳态验证，年底前启动大规模量产对接。\n3）传统主业对冲：硅酸钠及活性炭受宏观周期影响正加速筑底，下半年新材料高毛利产品营收占比将迎来重估拐点。\n4）公司正在推进收购福建同晟新材料科技股份公司100%股权 。同晟股份的核心产品是沉淀法二氧化硅（白炭黑），近年已切入高端球形硅微粉领域。", "date": "2026-06-21", "createdAt": 1782038127873}, {"id": "report-1782038201247", "target": "", "targets": [], "targetCodes": [], "content": "屹唐股份出海占比国内第一，客户涵盖海力士、三星、Intel、台积电等头部厂商。设备涨价已获海力士认可，台积/海力士有望接受其核心设备涨价。公司存储业务占比60-70%，受益于长江存储、长鑫存储扩产。前四个月新签订单30-40亿元，全年预期从60-70亿元上修至100-120亿元。", "summary": "屹唐股份出海占比国内第一，客户涵盖海力士、三星、Intel、台积电等头部厂商。设备涨价已获海力士认可，台积/海力士有望接受其核心设备涨价。公司存储业务占比60-70%，受益于长江存储、长鑫存储扩产。前四个月新签订单30-40亿元，全年预期从60-70亿元上修至100-120亿元。", "industry": "半导体设备", "rawText": "重点推荐：全球设备预期差【屹唐股份】 \n\n逻辑①设备出海确认，30-40%海外。\n出海占比国内第一，囊括海力士+三星+intel+tsmc头部存储+逻辑厂，招股书有明确信息。\n\n逻辑②设备涨价确认，海外确认涨价中。\n海力士已接受东京电子系列设备涨价，近期台积/海力士亦有望接受屹唐核心设备涨价，加强交付周期。\n\n逻辑③双长受益#确认，60-70%存储。   \n全球细分领域绝对龙头，充分受益长存+长鑫存储大扩产。\n\n逻辑④订单上修确认，60-70e→100～120e。\n前四个月新签订单30-40e，全球扩产提速进一步推动全年预期提升", "date": "2026-06-21", "createdAt": 1782038201247}, {"id": "report-1782038230436", "target": "", "targets": [], "targetCodes": [], "content": "公司现有产能月产3000万平，新增12亿平米产能后总产能达20亿平米/年，产能释放节奏明确。基准净利润5.43亿元，涨价10%对应净利润7-8亿元，涨价20%对应净利润9.6-10亿元，业绩弹性极大。", "summary": "公司现有产能月产3000万平，新增12亿平米产能后总产能达20亿平米/年，产能释放节奏明确。基准净利润5.43亿元，涨价10%对应净利润7-8亿元，涨价20%对应净利润9.6-10亿元，业绩弹性极大。", "industry": "MLCC离型膜", "rawText": "斯迪克ML­CC离型膜调研笔记\n\n公司产能：\n\n现有产能：外销离型膜月产3000w平，1-2μm、2～4μm规格各占一半；下个月开始每月5000w平。\n\n扩产产能：新增产能12e平米，总产能将达20e平米/年，产能释放节奏明确。\n\n盈利弹性：基数扎实，#涨价带来巨额利润增量  \n\n基准盈利：新增12亿平米产能对应营收23亿元，毛利率超30%、净利率23.5%，基准净利润5.43亿元。\n\n涨价高弹性：公司公开数据产品均价1.6元/平米，（#我们认为是低估的，#首先其中有10%的产能是用于1μm以下产品，#价格远高于2块。第二没有考虑到q3涨价预期）\n\n涨价10%对应净利润7-8亿元，涨价20%对应净利润9.6-10亿元，业绩兑现空间极大。", "date": "2026-06-21", "createdAt": 1782038230436}, {"id": "report-1782646552567", "target": "巨石", "targets": ["巨石", "中材", "国际复材", "东材", "圣泉", "中化", "联瑞", "中船", "广钢", "金宏", "旗滨", "力诺"], "targetCodes": ["301526.SZ"], "content": "电子布7月涨价超预期；电子气体关注紧缺品种；玻璃基板价值量提升；国瓷材料受益断供逻辑；精细氟化工涨价，多氟多、巨化有进展。", "summary": "电子布7月涨价超预期；电子气体关注紧缺品种；玻璃基板价值量提升；国瓷材料受益断供逻辑；精细氟化工涨价，多氟多、巨化有进展。", "industry": "电子材料", "rawText": "1、PCB材料：电子布#7月涨价望超预期     （预计E布达历史最高价，巨石、中材、国际复材），树脂（东材、圣泉、中化）和硅微粉（联瑞）同样在产业趋势中。\n2、电子气体：关注紧缺涨价品种，六氟化钨（中船）、#超临界二氧化碳     （广钢、金宏）。\n3、玻璃基板：康宁发布玻璃桥，并获数十亿美元长单锁定，大趋势是#玻璃在AI硬件体系中的价值量整体提升。赛道的价值增量在上游和中游（玻璃有配方差异、很脆难加工），关注赔率好的原片标的 旗滨/力诺/凯盛等。\n4、对日材料核心标的：#国瓷材料，本周MLCC及齿科氧化锆稀土断供逻辑持续演绎，股价继续新高，国瓷作为陶瓷平台公司，还有氮化铝、精密陶瓷基板断供逻辑，催化较多。\n5、精细氟化工：近期半导体氢氟酸市场价上涨20-30%，#多氟多     G5级酸批量供应台积电、三星、长鑫等头部晶圆厂；#巨化     PFA万吨级产线顺利量产并通过关键验证，关注后续放量节奏。", "date": "2026-06-26", "createdAt": 1782646552567}, {"id": "report-1782646641838", "target": "长电科技", "targets": ["长电科技", "甬矽电子", "华天科技", "通富微电", "盛合晶微", "华大九天", "算力通信"], "targetCodes": ["688362.SH", "002185.SZ", "002156.SZ"], "content": "国内A股OSAT封测企业大规模扩产，长电科技临港项目投资78亿元，甬矽电子三期投资103亿元，华天科技南京基地投资30亿元，通富微电定增44亿元。盛合晶微合计投入近138.55亿元。华大九天为3D封装设计EDA供应商，客户包括H、中芯国际等。", "summary": "国内A股OSAT封测企业大规模扩产，长电科技临港项目投资78亿元，甬矽电子三期投资103亿元，华天科技南京基地投资30亿元，通富微电定增44亿元。盛合晶微合计投入近138.55亿元。华大九天为3D封装设计EDA供应商，客户包括H、中芯国际等。", "industry": "先进封装", "rawText": "💎二、国内A股OSAT封测企业扩产计划\n✅长电科技：临港新建高端先进封测厂，总投资78亿元，分两期，一期2028年下半年完工。\n✅甬矽电子：高端IC封测三期项目，总投资103亿元。\n✅华天科技：南京先进封测基地二期二阶段投资30亿元，达产后存储芯片年封装4.3亿只。\n✅通富微电：定增募资不超44亿元，投向存储、车规、晶圆级、算力通信多类封测产能扩建\n✅盛合晶微：合计投入近138.55亿元，含100亿级先进封装扩产+子公司增资38.55亿元。\n\n💎三、3D封装铲子股\n✅华大九天:3D封装设计EDA，公司3D ic主要客户H、中芯国际、华虹、海光、长电科技等", "date": "2026-06-26", "createdAt": 1782646641838}, {"id": "report-1782646751775", "target": "瑞松科技", "targets": ["瑞松科技", "官方文档写到支持24芯", "并可扩展至多倍通道数", "越需要瑞松的PLR"], "targetCodes": ["688090.SH"], "content": "康宁GlassBridge方案通过被动耦合降低高芯数通道量产难度，加速24/48通道方案落地，并支持多倍扩展。被动耦合提升了对MT插芯插装工艺精度和良率的要求，利好瑞松科技的PLR设备。北美客户重视，预计明年3500台出货量对应7亿利润增量，第一目标市值320亿。", "summary": "康宁GlassBridge方案通过被动耦合降低高芯数通道量产难度，加速24/48通道方案落地，并支持多倍扩展。被动耦合提升了对MT插芯插装工艺精度和良率的要求，利好瑞松科技的PLR设备。北美客户重视，预计明年3500台出货量对应7亿利润增量，第一目标市值320亿。", "industry": "电子/半导体设备", "rawText": "瑞松科技：    康宁GlassBridge加速24/48通道数方案量产，终极卖铲人高度受益高芯数趋势\n\n市场对于该项技术的理解还存在误区，在此汇报如下：\n1、此前CPO方案量产难度大，很大程度受制于FAU-PIC段主动耦合良率低，GlassBridge则转为以玻璃桥做fan-out实现被动耦合，降低量产难度，提升量产效率。对于NPO和CPO的量产落地起到加速作用。\n\n2、高芯数通道方案趋势再度明确。#官方文档写到支持24芯，#并可扩展至多倍通道数（如2*24，注意原文multiple，意味着还有更高扩展空间），并且兼容标准MT插芯接口。这点对于完善生态非常关键，在接口端并非单开一桌，而是沿用成熟生态，从而降低高通道数的扩展难度。\n\n3、被动耦合进一步要求MT-光纤插装工艺升级。康宁通过被动耦合降低FAU-PIC段工艺难度，即通过导针做端面对齐，物理层面实现耦合。但这实际上进一步对光进入MT插芯的环节提出了更高的要求，任何前置的穿纤误差都会导致被动耦合放大误差，影响整体良率。\n\n玫瑰总结一下，GlassBridge利用被动耦合降低原有主动耦合的量产难度，加速了高芯数并行光通道的落地，并且兼容标准的MT接口方案使得蛋糕更大，对MT插芯的插装工艺精度和良率要求都会较此前更加严苛。\n一言以蔽之，芯数越高，插装工艺要求越高，#越需要瑞松的PLR    \n\n北美客户对公司重视，从产业逻辑上也是明确的。以明年3500台出货量预计，对应7亿利润增量，第一目标价320亿。", "date": "2026-06-26", "createdAt": 1782646751775}, {"id": "report-1782650236393", "target": "旗滨集团", "targets": ["旗滨集团", "折叠屏手机", "射频通信领域", "已实现200", "玻璃基板用于射频IPD等", "在互连密度等方面要求低于封装玻璃基板", "高透在线CVD-FTO导电玻璃技改项", "高性能新能源汽车玻璃基板降碳减排技改", "空间测算", "高性能新能", "射频通信"], "targetCodes": ["601636.SH"], "content": "旗滨集团拟定向增发不超过14.3亿元，用于超薄柔性玻璃、玻璃基板、导电玻璃、新能源汽车玻璃及数字化升级等项目，旨在聚焦高端玻璃转型。UTG已进入自研设备设计阶段，玻璃基板已小批量送样验证。测算定增项目满产后可贡献约10亿利润，对应200亿市值，叠加底部160亿市值，合计目标市值360亿。", "summary": "旗滨集团拟定向增发不超过14.3亿元，用于超薄柔性玻璃、玻璃基板、导电玻璃、新能源汽车玻璃及数字化升级等项目，旨在聚焦高端玻璃转型。UTG已进入自研设备设计阶段，玻璃基板已小批量送样验证。测算定增项目满产后可贡献约10亿利润，对应200亿市值，叠加底部160亿市值，合计目标市值360亿。", "industry": "玻璃制造", "rawText": "旗滨集团：定增转型，聚焦高端玻璃\n\n拟向特定对象发行募集资金总额不超过14.3亿元用于：1）超薄柔性玻璃（UTG）制造平台及玻璃基板项目；2）高透在线 CVD-FTO 导电玻璃技改项目；3）高性能新能源汽车玻璃基板降碳减排技改项目；4）旗滨数字化升级建设项目；5）补充流动资金。其中：\n\n礼物UTG制造平台及玻璃基板项目：\n1）产品：UTG玻璃和低损耗低膨胀射频玻璃基板，分别针对#折叠屏手机及射频通信领域；   \n2）进展：UTG已攻克配方等核心技术，进入原片工厂相关自研设备设计阶段。低损耗低膨胀玻璃基板已突破高硼硅低介电玻璃配方等关键技术，#已实现200×200mm规格产品小批 量客户送样验证；\n3）产能：形成年产117万平方米生产能力。若假设UTG（单价0.2万/平米）及玻璃基板（单价0.5万/平米）各占50%测算，测算收入40亿左右。\n\n礼物#玻璃基板用于射频IPD等，即将分散的 电容、电感、电阻等结构集成至玻璃衬底上，从而实现更小尺寸、更低损耗和更高集成度，相较于有机基板或硅衬底，6G等高频信号传输效率更高。射频领域更注重低Df、Dk值，#在互连密度等方面要求低于封装玻璃基板 。\n\n礼物#高透在线CVD-FTO导电玻璃技改项 目，针对现有600t产线进行改造，主要应用于薄膜太阳能电池，测算对应1500万平米产量；#高性能新能源汽车玻璃基板降碳减排技改 项目，同样为现有产线改造，预计项目满产后将达到年13.06万吨产能。\n\n礼物#空间测算：     1）底部市值：考虑盈利α对应的底部市值约为160亿；2）若定增项目兑现，有望实现8（UTG&玻璃基板40*20%）+1.5（FTO导电玻璃0.15*50*20%）+0.3（汽车玻璃13.06*0.2*10%）=约10亿利润，给予20倍PE，对应200亿市值。合计市值360亿，潜在额外弹性在于周期景气修复。", "date": "2026-06-26", "createdAt": 1782650236393}, {"id": "report-1782650470917", "target": "飞凯材料", "targets": ["飞凯材料"], "targetCodes": ["300398.SZ"], "content": "飞凯材料光刻胶业务在显示面板和半导体领域放量，临时键合材料布局HBM等先进封装，AI驱动光纤涂料景气上行。", "summary": "飞凯材料光刻胶业务在显示面板和半导体领域放量，临时键合材料布局HBM等先进封装，AI驱动光纤涂料景气上行。", "industry": "光刻胶, 先进封装, 光纤光缆涂料", "rawText": "飞凯材料：光刻胶与先进封装材料平台， AI驱动光纤涂料景气上行\n\n太阳1）#光刻胶业务进入多场景放量阶段。显示面 板领域，公司正/负性光刻胶产品已获国内大型面板厂商认证采购；半导体领域，公司产品覆盖晶圆制造、晶圆级封装和芯片级封装等环节，i-line光刻胶及KrF配套BARC材料已稳定量产，具备国产替代和客户拓展潜力。\n\n太阳2）#临时键合材料布局HBM等先进封装环节 。公司已形成键合胶、光敏胶、清洗液等整套临时键合解决方案，可支持热拆解、机械拆解及激光拆解等多种工艺路线，面向2.5D/3D封装、HBM等先进封装应用场景，相关产品正持续推进客户端验证导入。苏州凯芯半导体材料基地预计2027年初投产，有望进一步完善公司半导体材料平台布局。\n\n太阳3）#国内领先的紫外固化光纤光缆涂覆材料企 业。公司深耕紫外固化材料近二十年，客户覆盖国内外主要光纤光缆生产商。2025年，公司紫外固化材料业务实现收入6.99亿元，同比增长13.71%，毛利率35.08%。受AI数据中心、算力网络建设带动，光纤光缆需求保持高景气，公司有望受益下游扩产需求。", "date": "2026-06-26", "createdAt": 1782650470917}, {"id": "report-1782651866497", "target": "三孚股份", "targets": ["三孚股份"], "targetCodes": ["603938.SH"], "content": "高纯四氯化硅主要用于光纤预制棒及人造石英生产，多家公司计划扩产。三孚股份具备3万吨产能并实现进口替代；新安股份参股子公司有4万吨产能即将投产；江瀚新材、宏柏新材和新亚强均有扩产计划。", "summary": "高纯四氯化硅主要用于光纤预制棒及人造石英生产，多家公司计划扩产。三孚股份具备3万吨产能并实现进口替代；新安股份参股子公司有4万吨产能即将投产；江瀚新材、宏柏新材和新亚强均有扩产计划。", "industry": "光纤材料", "rawText": "四氯化硅行业跟踪：主要用于光纤预制棒，多家公司计划扩产\n\n高纯四氯化硅主要用于光纤行业生产光纤预制棒及人造石英。光纤预制棒存在多种生产方式，主要原理是基于气相沉积法，将液态的四氯化硅和四氯化锗等卤化物气体，在一定条件下进行化学反应而生成掺杂的高纯石英玻璃。其中，高等级高纯度四氯化硅主要用于 PCVD 工艺；低等级低纯度四氯化硅用于 OVD 工艺和 VAD 工艺。\n\n三孚股份：具备产能3万吨。在高端芯棒生产方面，公司已实现对原材料要求较为苛刻的PCVD芯棒生产工艺的规模化供应，并实现了进口替代，同时我公司也是目前亚洲少数产品质量能够满足欧洲特纤市场的 9N 高纯四氯化硅生产企业，产品已成功销往欧洲市场。\n\n新安股份：公司参股子公司浙江亚格新安电子现有四氯化硅产能4万吨，具备高纯和超纯四氯化硅生产能力，可用于光纤、半导体等行业，相关产能预计将于今年6月份正式投入使用。除四氯化硅以外，目前有机硅系列产品中的D4已成为光纤预制棒包层主流生产工艺的核心原料，被普遍应用于光纤预制棒的生产。\n\n江瀚新材：功能性材料硅基前驱体项目的1万吨6N级四氯化硅和5000吨9N级正硅酸乙酯生产线预期可在27年上半年建成。\n\n宏柏新材：建设2万吨光纤级高纯四氯化硅和5000吨电子级正硅酸乙酯等新兴产业项目，计划2027年实现投产运行。\n\n新亚强：公司生产高纯四氯化硅等光纤级产品", "date": "2026-06-26", "createdAt": 1782651866497}, {"id": "report-1783155180535", "target": "奥迪威", "targets": ["奥迪威"], "targetCodes": [], "content": "1. MEMS压电散热风扇技术原创，国内唯一，用于GPU等高算力芯片散热。2. 已与美国TI达成战略合作，AMD完成两轮验证，预计2027年千万片出货。3. 液冷超声波流量计为海外大客户指定方案，已获测试订单，价值量2.4万/套。4. 主业支撑35亿+，新业务有望推动市值达200亿，当前约40亿，预期差巨大。", "summary": "1. MEMS压电散热风扇技术原创，国内唯一，用于GPU等高算力芯片散热。2. 已与美国TI达成战略合作，AMD完成两轮验证，预计2027年千万片出货。3. 液冷超声波流量计为海外大客户指定方案，已获测试订单，价值量2.4万/套。4. 主业支撑35亿+，新业务有望推动市值达200亿，当前约40亿，预期差巨大。", "industry": "电子/散热/液冷", "rawText": "【奥迪威】高端算力芯片散热与液冷超声波流量计（谷歌新方案）业务交流要点\n\nPC高端算力芯片散热业务（MEMS压电散热）\n\n1、应用场景：由于当今电磁风扇散热效率低，公司黑科技3mm厚度MEMS压电散热风扇，用于GPU等高算力芯片散热\n\n2、核心技术与海外对标：压电散热技术是公司原创，所有原材料部件包括核心技术难点压电陶瓷片均为公司自有知识产权，国内唯一。海外对标FRORE System，#今年D轮融资投后16亿美金（120亿人民币），技术与产能进展落后于公司\n\n3、进展：#与美国TI已经达成战略合作，贴装在芯片旁，芯片设计环节独家绑定。#AMD已经两轮验证深度对接\n\n4、价值量：公司ASP 4-5美金，26年开始小批量，27年预计千万片出货量（美国Airjet报价10美金），对应3-4亿收入，50%以上毛利率。长期若智能终端8亿台，规模量产后2美金。对应市场空间超100e\n\n液冷流量传感器\n\n1、核心产品：超声波流量计和外夹式流量监测\n\n2、价值量：单CDU配套4套传感器，价值量2.4万，海外竞争对手是日本东京计装，单CDU传感器价格是公司的2-3倍\n\n3、客户：#超声波流量计是海外大客户（G）的指定方案，目前公司与3+海外大客户定制开发, 已有客户下单测试性订单\n\n结论：公司主业1.2亿业绩，主业支持35亿+，MEMS压电散热风扇对标美国竞对100+亿市值，CDU液冷超声波流量计给50亿市值期权，看200亿目标市值，3倍空间。目前40亿出头市值，这两块业务市场没有任何定价，预期差巨大。#公司刚提交港交所上市申请，看到海外CSP大规模的扩产需求#文字观点", "date": "2026-07-04", "createdAt": 1783155180535}, {"id": "report-1784725471245", "target": "雅克科技", "targets": ["雅克科技", "鼎龙股份", "安集科技", "广钢气体", "路维光电", "艾森股份"], "targetCodes": ["002409.SZ", "300054.SZ", "688019.SH", "688548.SH", "688401.SH", "688720.SH"], "content": "AI景气度仍处独一档但交易剧烈波动，产业趋势未结束；存储材料首推长鑫第一大材料供应商雅克科技，封测材料首推艾森股份和华海诚科。", "summary": "AI景气度仍处独一档但交易剧烈波动，产业趋势未结束；存储材料首推长鑫第一大材料供应商雅克科技，封测材料首推艾森股份和华海诚科。", "industry": "电子", "rawText": "电子材料更新：AI景气度仍处独一档，反弹后进一步聚焦核心\n\n关于AI的问题：\n1、为何这个阶段全球AI交易剧烈波动？全球AI交易高度拥挤，尤其高杠杆情况下，经历2个季度上涨，市场进入纠结期，等待新的催化剂。随着监管降温、业绩期临近，市场出现高切低情况，基本面、业绩较好，但涨幅不够的板块容易触发补涨行情。\n2、AI产业趋势是否结束？AI泡沫的问题聚焦2个点，一是Capex规模，这是此前AI的锚，二是投资回报率。资本开支方面仍在增长，AI基础设施建设远未结束，Token使用量、付费率等快速增长，单位价格随着切换便宜的模型而下降（Kimi算力紧缺），这也在反应AI需求基础和商业化程度的提升。投资回报率的问题去年以来一直在被交易，需求扩张下收入提升能够环节现金流的压力，但短期仍然存在，从融资角度看未扩散到商业模式不稳定的初创企业，整体杠杆和信用风险相对健康。\n\n存储材料板块：首推长鑫第一大材料供应商【雅克科技】，重点关注产业链核心标的【鼎龙股份】【安集科技】【广钢气体】等；同时重点推荐此前涨幅较少，但基本面、业绩扎实的【路维光电】【蓝晓科技】等。\n封测材料板块：首推长鑫封装光刻胶baseline【艾森股份】，以及国内塑封料龙头【华海诚科】，同时关注【天承科技】等。\n持续推荐弹性标的：【天禄科技】【江化微】等。关注国瓷氧化锆短期涨价兑现机会", "date": "2026-07-22", "createdAt": 1784725471245}];
     const INITIAL_SOCIAL_TRACKERS = [{"id": "kol-1781951184334", "name": "白毛", "handle": "aleabitoreddit", "platform": "X", "enabled": true, "createdAt": 1781951184334}, {"id": "kol-1782041183510", "name": "jukan", "handle": "jukan05", "platform": "X", "enabled": true, "createdAt": 1782041183510}];
     const INITIAL_SOCIAL_ENTRIES = [{"id": "social-1781951118887", "kol": "Serenity", "handle": "", "platform": "X", "target": "未提及", "content": "个人笔记提及Priortech持有CAMT 21%股份，Bit Digital的WYFI存在NAV折价不清晰及大量稀释问题，Wistron（3231）是自SIVE以来看到的最佳标的。", "summary": "个人笔记提及Priortech持有CAMT 21%股份，Bit Digital的WYFI存在NAV折价不清晰及大量稀释问题，Wistron（3231）是自SIVE以来看到的最佳标的。", "industry": "", "targets": ["CAMT", "WYFI", "3231", "SIVE"], "rawText": "In terms of personal notes:\n\n1. Priortech owns 21% of $CAMT, ~1.35x their MC, seems more like holding co.\n\n2. Bit Digital people kept shouting, but NAV discount is not clean $WYFI, lot of dilution + not AI parent.\n\n3. Wistron (3231) is the best one I've seen since $SIVE + Ayar +… https://t.co/W43DrOp1ft\n&mdash; Serenity (@aleabitoreddit) June 20, 2026", "translatedText": "个人笔记：\n1. Priortech持有$CAMT 21%股份，约1.35倍于其市值，更像控股公司。\n2. Bit Digital的人一直在喊，但$WYFI的NAV折价并不干净，存在大量稀释且不是AI母公司。\n3. Wistron（3231）是我自$SIVE以来看到的最好标的，加上Ayar等……", "sourceUrl": "https://x.com/aleabitoreddit/status/2068180134667182470", "tweetUrl": "https://x.com/aleabitoreddit/status/2068180134667182470", "sourceNote": "", "date": "2026-06-20", "createdAt": 1781951118887}, {"id": "social-1781951173878", "kol": "Serenity", "handle": "", "platform": "X", "target": "LPK", "content": "Serenity指出$LPK会议纪要显示NASDAQ上市正在积极讨论，目标70%市场份额，TAM远超此前预期，看好4-5倍增长潜力，市场或已忽略该利好。", "summary": "Serenity指出$LPK会议纪要显示NASDAQ上市正在积极讨论，目标70%市场份额，TAM远超此前预期，看好4-5倍增长潜力，市场或已忽略该利好。", "industry": "", "targets": ["LPK"], "rawText": "Wow, I completely missed this with $LPK meeting notes.\n\nAnd I think markets did too. My biggest takeaway:\n\n- NASDAQ listing is actively on their radar and are in discussions.\n- 70% market share targeted, unholy target.\n- TAM greatly exceeds former projections.\n- See a 4-5 base… https://t.co/niepnmBFkG\n&mdash; Serenity (@aleabitoreddit) June 19, 2026", "translatedText": "哇，我完全错过了$LPK的会议纪要。而且我认为市场也错过了。我最大的收获：- NASDAQ上市正在他们的雷达上，并且正在讨论中。- 目标70%市场份额，极高的目标。- TAM大大超过之前的预测。- 看到4-5倍基础…", "sourceUrl": "https://x.com/aleabitoreddit/status/2067958378488623499", "tweetUrl": "https://x.com/aleabitoreddit/status/2067958378488623499", "sourceNote": "", "date": "2026-06-19", "createdAt": 1781951173878}, {"id": "social-1782034362503", "kol": "Serenity", "handle": "", "platform": "X", "target": "OE Solutions (138080)", "content": "分享对韩国光收发器公司OE Solutions (138080)的研究，认为其类似于AAOI，并已成为全球少数EML玩家之一。", "summary": "分享对韩国光收发器公司OE Solutions (138080)的研究，认为其类似于AAOI，并已成为全球少数EML玩家之一。", "industry": "光模块", "targets": ["OE Solutions (138080)", "AAOI", "COHR", "LITE"], "rawText": "I've been getting a lot of questions about OE Solutions (138080) recently.\n\nHere's my research/thoughts so far on it:\n\nThey're a small Korean optical transceiver company, similar to $AAOI.\n\nAnd they've become one the few EML players in the world (eg. $COHR, $LITE, Mitsubishi,… https://t.co/x8Dx7LUNlk pic.twitter.com/biBznaQdxY\n&mdash; Serenity (@aleabitoreddit) June 21, 2026", "translatedText": "最近我收到了很多关于OE Solutions (138080)的问题。以下是我目前对它的研究/想法：他们是一家小型韩国光收发器公司，类似于$AAOI。而且他们已成为全球少数EML玩家之一（例如$COHR、$LITE、三菱……", "sourceUrl": "https://x.com/aleabitoreddit/status/2068603148311404902", "tweetUrl": "https://x.com/aleabitoreddit/status/2068603148311404902", "sourceNote": "", "date": "2026-06-21", "createdAt": 1782034362503}, {"id": "social-1782038276469", "kol": "Serenity", "handle": "", "platform": "X", "target": "未提及", "content": "特朗普政府或已意识到赢得贸易战的关键在于掌控量子、AI、机器人等前沿供应链，而非低端出口，日本、欧盟、台湾、韩国等地企业掌握关键优势。", "summary": "特朗普政府或已意识到赢得贸易战的关键在于掌控量子、AI、机器人等前沿供应链，而非低端出口，日本、欧盟、台湾、韩国等地企业掌握关键优势。", "industry": "半导体与前沿科技供应链", "targets": ["ASML", "TOWA", "LPK", "Ajinomoto"], "rawText": "Trump administration is prob realizing now that the key to winning Trade Wars:\n\nIs through frontier supply chains like Quantum, AI, Robotics.\n\nNot cheap Nike sock exports.\n\nWith $ASML, $TOWA, $LPK, Ajinomoto,\nover in Japan, EU, TW, Korea, and others holding all the cards……\n&mdash; Serenity (@aleabitoreddit) June 21, 2026", "translatedText": "特朗普政府现在可能意识到赢得贸易战的关键在于量子、AI、机器人等前沿供应链，而不是廉价的耐克袜子出口。ASML、TOWA、LPK、味之素等公司，在日本、欧盟、台湾、韩国等地掌握所有关键筹码……", "sourceUrl": "https://x.com/aleabitoreddit/status/2068537478131118438", "tweetUrl": "https://x.com/aleabitoreddit/status/2068537478131118438", "sourceNote": "", "date": "2026-06-21", "createdAt": 1782038276469}, {"id": "social-1782041043143", "kol": "Jukan", "handle": "", "platform": "X", "target": "Nvidia", "content": "推文推荐一篇文章，指出Nvidia CMX机架有望大幅拉动NAND需求。", "summary": "推文推荐一篇文章，指出Nvidia CMX机架有望大幅拉动NAND需求。", "industry": "半导体", "targets": ["Nvidia", "NAND"], "rawText": "This is a great piece explaining why Nvidia’s CMX rack could drive massive NAND demand. I highly recommend giving it a read.https://t.co/PbmPcmFYjY\n&mdash; Jukan (@jukan05) June 21, 2026", "translatedText": "这是一篇很好的文章，解释了为什么Nvidia的CMX机架可能会推动巨大的NAND需求。我强烈推荐阅读。https://t.co/PbmPcmFYjY", "sourceUrl": "https://x.com/jukan05/status/2068595103233671513", "tweetUrl": "https://x.com/jukan05/status/2068595103233671513", "sourceNote": "", "date": "2026-06-21", "createdAt": 1782041043143}, {"id": "social-1782041339327", "kol": "leki ⚔️", "handle": "", "platform": "X", "target": "$IQE", "content": "作者表示之前未发现关于$IQE的文章，强烈推荐光子学板块（如$SIVE、$AAOI等）投资者阅读，认为文章极具说服力，股价已上涨约120%。", "summary": "作者表示之前未发现关于$IQE的文章，强烈推荐光子学板块（如$SIVE、$AAOI等）投资者阅读，认为文章极具说服力，股价已上涨约120%。", "industry": "光子学", "targets": ["$IQE", "$SIVE", "$AAOI"], "rawText": "How did I not stumble upon this article on $IQE previously, I can't believe it.\n\nIf you're invested in the photonics sector ($SIVE, $AAOI etc.), give this a read. Trust me, you will want to take a position after reading it, it's just way too compelling. Price is up about 120%… https://t.co/tgkEB5RA23\n&mdash; leki ⚔️ (@mkfilko) June 21, 2026", "translatedText": "我之前怎么没看到这篇关于$IQE的文章，简直不敢相信。如果你投资了光子学板块（$SIVE、$AAOI等），一定要读一读。相信我，读完你会想入场，这篇文章太有说服力了。股价已上涨约120%…", "sourceUrl": "https://x.com/mkfilko/status/2068616407764574644", "tweetUrl": "https://x.com/mkfilko/status/2068616407764574644", "sourceNote": "", "date": "2026-06-21", "createdAt": 1782041339327}, {"id": "social-1782545780413", "kol": "Serenity", "handle": "", "platform": "X", "target": "功率半导体", "content": "功率半导体已开始涨价，对AOSL至POWI的美国功率半导体主题利好，在800V DC转变完全到来前；扬杰科技宣布今年第二次全面涨价。", "summary": "功率半导体已开始涨价，对AOSL至POWI的美国功率半导体主题利好，在800V DC转变完全到来前；扬杰科技宣布今年第二次全面涨价。", "industry": "功率半导体", "targets": ["AOSL", "POWI", "扬杰科技"], "rawText": "Looks like Power Semis are already starting price hikes.\n\nWhich is bullish thematically for US power semi trade from $AOSL to $POWI, before the 800V DC shift fully hits.\n\nChina's Yangjie Technology, announced a 2nd price increase this year, raising prices across its full product… pic.twitter.com/UrseTyBMFp\n&mdash; Serenity (@aleabitoreddit) June 26, 2026", "translatedText": "看起来功率半导体已经开始涨价。这在主题上利好从$AOSL到$POWI的美国功率半导体交易，在800V DC转变完全到来之前。中国扬杰科技宣布今年第二次涨价，全面提高产品价格…", "sourceUrl": "https://x.com/aleabitoreddit/status/2070304723262210194", "tweetUrl": "https://x.com/aleabitoreddit/status/2070304723262210194", "sourceNote": "", "date": "2026-06-26", "createdAt": 1782545780413}];
@@ -13088,6 +13185,19 @@
       return next;
     }
 
+    function normalizeMonthlyGoldCodesPayload(payload) {
+      if (!Array.isArray(payload)) return [];
+      const next = [];
+      const seen = new Set();
+      payload.forEach(value => {
+        const code = String(value || '').trim().toUpperCase();
+        if (!/^\d{6}\.(?:SH|SZ|BJ)$/.test(code) || seen.has(code)) return;
+        seen.add(code);
+        next.push(code);
+      });
+      return next.slice(0, 50);
+    }
+
     function replaceObjectContents(target, source) {
       Object.keys(target).forEach(key => delete target[key]);
       Object.entries(source).forEach(([key, value]) => {
@@ -13325,6 +13435,7 @@
         watchlistStatus: normalizeWatchlistStatusPayload(watchlistStatusMap),
         strongJoinStatus: normalizeStrongJoinPayload(strongJoinMap),
         monthlyGoldLogic: normalizeMonthlyGoldLogicPayload(monthlyGoldLogicMap),
+        monthlyGoldCodes: normalizeMonthlyGoldCodesPayload(monthlyGoldCodes),
         reports: loadReportEntries(),
         socialKolWatchlist: loadSocialTrackers(),
         socialPosts: loadSocialEntries(),
@@ -13386,16 +13497,24 @@
       const nextWatchlistStatus = normalizeWatchlistStatusPayload(payload?.watchlistStatus || {});
       const nextStrongJoinStatus = normalizeStrongJoinPayload(payload?.strongJoinStatus || {});
       const nextMonthlyGoldLogic = normalizeMonthlyGoldLogicPayload(payload?.monthlyGoldLogic || {});
+      const hasMonthlyGoldCodes = Array.isArray(payload?.monthlyGoldCodes);
+      const nextMonthlyGoldCodes = hasMonthlyGoldCodes
+        ? normalizeMonthlyGoldCodesPayload(payload.monthlyGoldCodes)
+        : monthlyGoldCodes;
       const nextReports = mergeReportEntries([], Array.isArray(payload?.reports) ? payload.reports : []);
       const nextSocialKolWatchlist = mergeSocialTrackers([], Array.isArray(payload?.socialKolWatchlist) ? payload.socialKolWatchlist : []);
       const nextSocialPosts = mergeSocialEntries([], Array.isArray(payload?.socialPosts) ? payload.socialPosts : []);
       replaceObjectContents(watchlistStatusMap, nextWatchlistStatus);
       replaceObjectContents(strongJoinMap, nextStrongJoinStatus);
       replaceObjectContents(monthlyGoldLogicMap, nextMonthlyGoldLogic);
+      if (hasMonthlyGoldCodes) {
+        monthlyGoldCodes.splice(0, monthlyGoldCodes.length, ...nextMonthlyGoldCodes);
+      }
       saveWatchlistStatus(watchlistStatusMap);
       saveStrongJoinStatus(strongJoinMap);
       window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
-      syncMonthlyGoldLogicInputs();
+      window.localStorage.setItem(MONTHLY_GOLD_CODES_KEY, JSON.stringify(monthlyGoldCodes));
+      renderMonthlyGoldCustomRows();
       saveReportEntries(nextReports);
       saveSocialTrackers(nextSocialKolWatchlist);
       saveSocialEntries(nextSocialPosts);
@@ -14217,6 +14336,16 @@
 
     const watchlistStatusMap = loadWatchlistStatus();
     const strongJoinMap = loadStrongJoinStatus();
+    const baseMonthlyGoldCodeSet = new Set(monthlyGoldStocks.map(item => item.code));
+    let monthlyGoldCodes = normalizeMonthlyGoldCodesPayload(INITIAL_MONTHLY_GOLD_CODES);
+    try {
+      monthlyGoldCodes = normalizeMonthlyGoldCodesPayload([
+        ...monthlyGoldCodes,
+        ...JSON.parse(window.localStorage.getItem(MONTHLY_GOLD_CODES_KEY) || '[]'),
+      ]);
+    } catch (error) {
+      monthlyGoldCodes = normalizeMonthlyGoldCodesPayload(INITIAL_MONTHLY_GOLD_CODES);
+    }
     let monthlyGoldLogicMap = {...INITIAL_MONTHLY_GOLD_LOGIC};
     try {
       monthlyGoldLogicMap = {
@@ -14237,6 +14366,135 @@
         input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
         resizeCoreLogicInput(input);
       });
+    }
+
+    function bindCoreLogicInput(input) {
+      if (input.dataset.boundCoreLogic === 'true') return;
+      input.dataset.boundCoreLogic = 'true';
+      input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
+      resizeCoreLogicInput(input);
+      input.addEventListener('input', () => {
+        const value = input.value.trim();
+        if (value) monthlyGoldLogicMap[input.dataset.code] = value;
+        else delete monthlyGoldLogicMap[input.dataset.code];
+        window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
+        resizeCoreLogicInput(input);
+      });
+      input.addEventListener('change', () => {
+        queueDashboardStateSync(undefined, { promptForToken: true });
+      });
+    }
+
+    function createMonthlyGoldRow(item) {
+      const totalMarketCap = Number(item.totalMarketCap || 0);
+      const floatMarketCap = Number(item.floatMarketCap || 0);
+      const todayAmount = Number(item.todayAmount || 0);
+      const turnoverRate = item.turnoverRate == null ? null : Number(item.turnoverRate);
+      const todayPct = item.todayPct == null ? null : Number(item.todayPct);
+      const peRatio = item.peRatio == null ? null : Number(item.peRatio);
+      const totalCapText = totalMarketCap > 0 ? formatYi(totalMarketCap) : '-';
+      const floatCapText = floatMarketCap > 0 ? formatYi(floatMarketCap) : '-';
+      const amountText = todayAmount > 0 ? formatYiRmb(todayAmount) : '-';
+      const turnoverText = turnoverRate == null || Number.isNaN(turnoverRate) ? '-' : turnoverRate.toFixed(2) + '%';
+      const pctText = todayPct == null || Number.isNaN(todayPct) ? '-' : (todayPct >= 0 ? '+' : '') + todayPct.toFixed(2) + '%';
+      const peText = peRatio == null || Number.isNaN(peRatio) ? '暂无' : peRatio.toFixed(2);
+      const wrapper = document.createElement('tbody');
+      wrapper.innerHTML = `
+        <tr data-strong-stock-row="true" data-monthly-gold-custom="true" data-cap-group="${capGroupKeyFromValue(totalMarketCap)}" data-code="${escapeHtml(item.code)}" data-name="${escapeHtml(item.name || item.code)}" data-main-business="${escapeHtml(item.mainBusiness || '-')}" data-total-market-cap="${totalMarketCap}" data-float-market-cap="${floatMarketCap}" data-today-amount="${todayAmount}" data-turnover-rate="${turnoverRate == null ? '' : turnoverRate}" data-today-pct="${todayPct == null ? '' : todayPct}">
+          <td class="index-cell" data-index-cell="monthly-gold"></td>
+          <td data-search="${escapeHtml(item.name || item.code)} ${escapeHtml(item.code)}">
+            <button class="stock-trigger strong-stock-trigger" type="button" data-code="${escapeHtml(item.code)}">
+              <span class="stock-name">${escapeHtml(item.name || item.code)}</span>
+              <span class="stock-code">${escapeHtml(item.code)}</span>
+            </button>
+          </td>
+          <td>${escapeHtml(item.mainBusiness || '-')}</td>
+          <td class="nowrap-cell">${totalCapText} / ${floatCapText}</td>
+          <td class="nowrap-cell">${amountText}</td>
+          <td class="nowrap-cell">${turnoverText}</td>
+          <td class="${pctClass(todayPct)}">${pctText}</td>
+          <td class="nowrap-cell">${peText}</td>
+          <td><textarea class="core-logic-input" data-code="${escapeHtml(item.code)}" rows="2" aria-label="${escapeHtml(item.name || item.code)}核心逻辑" placeholder="输入核心逻辑"></textarea></td>
+        </tr>
+      `;
+      return wrapper.firstElementChild;
+    }
+
+    function updateMonthlyGoldCount() {
+      const count = monthlyGoldTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').length;
+      monthlyGoldCountPill.textContent = `共 ${count} 只`;
+    }
+
+    function setMonthlyGoldActionNote(message, state = '') {
+      monthlyGoldActionNote.textContent = message;
+      if (state) monthlyGoldActionNote.dataset.state = state;
+      else delete monthlyGoldActionNote.dataset.state;
+    }
+
+    function renderMonthlyGoldCustomRows() {
+      monthlyGoldTableBody.querySelectorAll('tr[data-monthly-gold-custom="true"]').forEach(row => row.remove());
+      monthlyGoldCodes.forEach(code => {
+        if (baseMonthlyGoldCodeSet.has(code)) return;
+        const itemIndex = modalIndexByCode[code];
+        const item = itemIndex == null
+          ? { code, name: code, mainBusiness: '-' }
+          : modalItems[itemIndex];
+        const row = createMonthlyGoldRow(item);
+        monthlyGoldTableBody.appendChild(row);
+        bindStrongStockRow(row);
+        bindCoreLogicInput(row.querySelector('.core-logic-input'));
+        const trigger = row.querySelector('.stock-trigger');
+        if (trigger && itemIndex != null) {
+          trigger.addEventListener('click', event => {
+            event.stopPropagation();
+            openStockModalByCode(code);
+          });
+        }
+      });
+      syncMonthlyGoldLogicInputs();
+      renumberTableRows();
+      updateMonthlyGoldCount();
+    }
+
+    async function addMonthlyGoldByName() {
+      const stockName = String(monthlyGoldNameInput.value || '').trim();
+      if (!stockName) {
+        setMonthlyGoldActionNote('请输入股票名称', 'error');
+        monthlyGoldNameInput.focus();
+        return;
+      }
+      if (/^\d{6}(?:\.(?:SH|SZ|BJ))?$/i.test(stockName)) {
+        setMonthlyGoldActionNote('这里请输入股票名称，不是代码', 'error');
+        monthlyGoldNameInput.select();
+        return;
+      }
+      const code = modalCodeByAlias[normalizeModalAlias(stockName)];
+      const itemIndex = code == null ? null : modalIndexByCode[code];
+      const item = itemIndex == null ? null : modalItems[itemIndex];
+      if (!code || !item) {
+        setMonthlyGoldActionNote('未找到该股票，请输入完整股票名称', 'error');
+        monthlyGoldNameInput.select();
+        return;
+      }
+      if (baseMonthlyGoldCodeSet.has(code) || monthlyGoldCodes.includes(code)) {
+        setMonthlyGoldActionNote(`${item.name}已在当月金股中`, 'error');
+        monthlyGoldNameInput.select();
+        return;
+      }
+      monthlyGoldCodes.push(code);
+      window.localStorage.setItem(MONTHLY_GOLD_CODES_KEY, JSON.stringify(monthlyGoldCodes));
+      renderMonthlyGoldCustomRows();
+      monthlyGoldNameInput.value = '';
+      setMonthlyGoldActionNote(`已添加：${item.name}`, 'success');
+      monthlyGoldAddButton.disabled = true;
+      try {
+        const saved = await queueDashboardStateSync(undefined, { promptForToken: true });
+        if (Array.isArray(saved?.monthlyGoldCodes) && saved.monthlyGoldCodes.includes(code)) {
+          setMonthlyGoldActionNote(`已添加并保存：${item.name}`, 'success');
+        }
+      } finally {
+        monthlyGoldAddButton.disabled = false;
+      }
     }
 
     document.querySelectorAll('.stock-trigger').forEach(node => {
@@ -14261,19 +14519,13 @@
     watchlistTableBody.querySelectorAll('tr[data-watchlist-row="true"]').forEach(bindWatchlistRow);
     strongStocksTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(bindStrongStockRow);
     monthlyGoldTableBody.querySelectorAll('tr[data-strong-stock-row="true"]').forEach(bindStrongStockRow);
-    monthlyGoldTableBody.querySelectorAll('.core-logic-input').forEach(input => {
-      input.value = String(monthlyGoldLogicMap[input.dataset.code] || '');
-      resizeCoreLogicInput(input);
-      input.addEventListener('input', () => {
-        const value = input.value.trim();
-        if (value) monthlyGoldLogicMap[input.dataset.code] = value;
-        else delete monthlyGoldLogicMap[input.dataset.code];
-        window.localStorage.setItem(MONTHLY_GOLD_LOGIC_KEY, JSON.stringify(monthlyGoldLogicMap));
-        resizeCoreLogicInput(input);
-      });
-      input.addEventListener('change', () => {
-        queueDashboardStateSync(undefined, { promptForToken: true });
-      });
+    monthlyGoldTableBody.querySelectorAll('.core-logic-input').forEach(bindCoreLogicInput);
+    renderMonthlyGoldCustomRows();
+    monthlyGoldAddButton.addEventListener('click', addMonthlyGoldByName);
+    monthlyGoldNameInput.addEventListener('keydown', event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      addMonthlyGoldByName();
     });
 
     document.querySelectorAll('.join-watchlist-select').forEach(select => {

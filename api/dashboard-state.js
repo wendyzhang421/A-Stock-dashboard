@@ -59,6 +59,20 @@ function sanitizeMonthlyGoldLogic(payload) {
   return out;
 }
 
+function sanitizeMonthlyGoldCodes(payload) {
+  if (!Array.isArray(payload)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const value of payload) {
+    const code = String(value || "").trim().toUpperCase();
+    if (!/^\d{6}\.(?:SH|SZ|BJ)$/.test(code) || seen.has(code)) continue;
+    seen.add(code);
+    out.push(code);
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
 function normalizeTargetLabel(value) {
   if (value == null) return "";
   if (typeof value === "string" || typeof value === "number") {
@@ -296,6 +310,7 @@ async function loadStateBundle() {
     watchlistStatus: {},
     strongJoinStatus: {},
     monthlyGoldLogic: {},
+    monthlyGoldCodes: [],
     updatedAt: "",
   });
   const reports = await readRepoJson(RESEARCH_REPORTS_PATH, []);
@@ -305,6 +320,7 @@ async function loadStateBundle() {
     watchlistStatus: sanitizeWatchlistStatus(watch.data.watchlistStatus || {}),
     strongJoinStatus: sanitizeStrongJoinStatus(watch.data.strongJoinStatus || {}),
     monthlyGoldLogic: sanitizeMonthlyGoldLogic(watch.data.monthlyGoldLogic || {}),
+    monthlyGoldCodes: sanitizeMonthlyGoldCodes(watch.data.monthlyGoldCodes || []),
     reports: sanitizeReports(reports.data),
     socialKolWatchlist: sanitizeSocialKolWatchlist(socialKolWatchlist.data),
     socialPosts: sanitizeSocialPosts(socialPosts.data),
@@ -360,6 +376,9 @@ module.exports = async (req, res) => {
     const nextMonthlyGoldLogic = Object.prototype.hasOwnProperty.call(body, "monthlyGoldLogic")
       ? sanitizeMonthlyGoldLogic(body.monthlyGoldLogic)
       : current.monthlyGoldLogic;
+    const nextMonthlyGoldCodes = Object.prototype.hasOwnProperty.call(body, "monthlyGoldCodes")
+      ? sanitizeMonthlyGoldCodes(body.monthlyGoldCodes)
+      : current.monthlyGoldCodes;
     const nextReports = Object.prototype.hasOwnProperty.call(body, "reports")
       ? sanitizeReports(body.reports)
       : current.reports;
@@ -375,6 +394,7 @@ module.exports = async (req, res) => {
       watchlistStatus: nextWatchlistStatus,
       strongJoinStatus: nextStrongJoinStatus,
       monthlyGoldLogic: nextMonthlyGoldLogic,
+      monthlyGoldCodes: nextMonthlyGoldCodes,
       updatedAt,
     };
     await writeRepoJson(
@@ -406,6 +426,7 @@ module.exports = async (req, res) => {
       watchlistStatus: nextWatchlistStatus,
       strongJoinStatus: nextStrongJoinStatus,
       monthlyGoldLogic: nextMonthlyGoldLogic,
+      monthlyGoldCodes: nextMonthlyGoldCodes,
       reports: nextReports,
       socialKolWatchlist: nextSocialKolWatchlist,
       socialPosts: nextSocialPosts,
