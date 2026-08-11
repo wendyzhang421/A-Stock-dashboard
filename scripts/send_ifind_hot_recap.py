@@ -29,6 +29,11 @@ THEMES = [
     ("油气 / 煤化工", "油气、煤炭及甲醇方向轮动", ["油气", "煤炭", "甲醇"]),
     ("其他概念", "航运、消费与事件驱动分支", []),
 ]
+CAP_GROUPS = [
+    ("mega", "1000亿以上"),
+    ("large", "500-1000亿"),
+    ("small", "500亿以下"),
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -157,7 +162,7 @@ def render_image(rows: list[dict], trade_date: date, output_path: Path) -> None:
         return "亏损" if number < 0 else f"{number:.1f}x"
 
     draw.rounded_rectangle((40, 35, width - 40, 275), radius=28, fill="#D93A32")
-    draw.text((margin, 64), trade_date.strftime("%m月%d日"), font=face(74, True), fill="#FFFFFF")
+    draw.text((margin, 64), f"{trade_date.month:02d}月{trade_date.day:02d}日", font=face(74, True), fill="#FFFFFF")
     draw.text((margin, 145), "A股涨停热点复盘", font=face(58, True), fill="#FFFFFF")
     max_board = max(int(row.get(board_key) or 1) for row in rows)
     sealed = sum(str(row.get(open_key)) == "0" for row in rows)
@@ -199,12 +204,195 @@ def render_image(rows: list[dict], trade_date: date, output_path: Path) -> None:
     image.save(output_path, optimize=True)
 
 
-def send_document(session: requests.Session, image_path: Path, trade_date: date) -> int:
+def load_strong_stock_rows(trade_date: date) -> list[dict]:
+    source_path = ROOT / "reports" / f"watchlist_strong_stocks_{trade_date.isoformat()}.json"
+    if not source_path.exists():
+        raise FileNotFoundError(f"missing strong-stock report: {source_path}")
+    rows = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError(f"strong-stock report is empty or invalid: {source_path}")
+    return rows
+
+
+def cap_group_key(row: dict) -> str:
+    cap = float(row.get("totalMarketCap") or 0)
+    if cap >= 1e11:
+        return "mega"
+    if cap >= 5e10:
+        return "large"
+    return "small"
+
+
+def render_strong_stock_table(rows: list[dict], trade_date: date, output_path: Path) -> None:
+    font_path = find_font()
+    width, margin, row_h, group_h, header_h = 1840, 40, 66, 52, 64
+    grouped = [
+        (label, [row for row in rows if cap_group_key(row) == key])
+        for key, label in CAP_GROUPS
+    ]
+    grouped = [(label, bucket) for label, bucket in grouped if bucket]
+    height = 270 + header_h + sum(group_h + len(bucket) * row_h for _, bucket in grouped) + 85
+    image = Image.new("RGB", (width, height), "#F5F7FA")
+    draw = ImageDraw.Draw(image)
+
+    def face(size: int, bold=False):
+        try:
+            return ImageFont.truetype(str(font_path), size=size, index=1 if bold else 0)
+        except OSError:
+            return ImageFont.truetype(str(font_path), size=size)
+
+    fonts = {
+        "title": face(58, True),
+        "date": face(30),
+        "header": face(22, True),
+        "group": face(23, True),
+        "cell": face(21),
+        "cell_bold": face(22, True),
+        "code": face(16),
+        "foot": face(20),
+    }
+
+    def fit_text(value, font, max_width: int) -> str:
+        text = str(value or "-")
+        if draw.textlength(text, font=font) <= max_width:
+            return text
+        suffix = "…"
+        while text and draw.textlength(text + suffix, font=font) > max_width:
+            text = text[:-1]
+        return text + suffix
+
+    def center_y(y: int, height_value: int, font) -> int:
+        bounds = draw.textbbox((0, 0), "沪深A股", font=font)
+        return y + (height_value - (bounds[3] - bounds[1])) // 2 - bounds[1]
+
+    def fmt_yi(value, decimals=1) -> str:
+        if value in (None, ""):
+            return "-"
+        return f"{float(value) / 1e8:.{decimals}f}亿"
+
+    def fmt_pct(value) -> str:
+        if value in (None, ""):
+            return "-"
+        return f"{float(value):+.2f}%"
+
+    def fmt_pe(value) -> str:
+        if value in (None, ""):
+            return "暂无"
+        return f"{float(value):.2f}"
+
+    draw.rounded_rectangle((40, 35, width - 40, 220), radius=28, fill="#D93A32")
+    draw.text((margin + 30, 62), "当日强势股", font=fonts["title"], fill="#FFFFFF")
+    draw.text(
+        (margin + 32, 143),
+        f"{trade_date.year}年{trade_date.month:02d}月{trade_date.day:02d}日   共 {len(rows)} 只   按总市值分组",
+        font=fonts["date"],
+        fill="#FFE9D6",
+    )
+
+    columns = [
+        ("编号", 80),
+        ("股票", 260),
+        ("主营方向", 430),
+        ("总市值 / 流通市值", 340),
+        ("当日成交额", 190),
+        ("换手率", 140),
+        ("当日涨幅", 140),
+        ("PE", 180),
+    ]
+    table_left = margin
+    y = 255
+    draw.rectangle((table_left, y, width - margin, y + header_h), fill="#28323D")
+    x = table_left
+    for label, column_width in columns:
+        label_width = draw.textlength(label, font=fonts["header"])
+        draw.text(
+            (x + (column_width - label_width) / 2, center_y(y, header_h, fonts["header"])),
+            label,
+            font=fonts["header"],
+            fill="#FFFFFF",
+        )
+        x += column_width
+    y += header_h
+
+    stock_index = 1
+    for group_label, bucket in grouped:
+        draw.rectangle((table_left, y, width - margin, y + group_h), fill="#F2C96D")
+        draw.text((table_left + 24, center_y(y, group_h, fonts["group"])), group_label, font=fonts["group"], fill="#7A301C")
+        count_text = f"{len(bucket)}只"
+        draw.text(
+            (width - margin - 24 - draw.textlength(count_text, font=fonts["group"]), center_y(y, group_h, fonts["group"])),
+            count_text,
+            font=fonts["group"],
+            fill="#7A301C",
+        )
+        y += group_h
+        for row_index, row in enumerate(bucket):
+            fill = "#FFFFFF" if row_index % 2 == 0 else "#FAFBFC"
+            draw.rectangle((table_left, y, width - margin, y + row_h), fill=fill)
+            x = table_left
+
+            index_text = str(stock_index)
+            draw.text(
+                (x + (columns[0][1] - draw.textlength(index_text, font=fonts["cell"])) / 2, center_y(y, row_h, fonts["cell"])),
+                index_text,
+                font=fonts["cell"],
+                fill="#59636E",
+            )
+            x += columns[0][1]
+
+            stock_name = fit_text(row.get("name"), fonts["cell_bold"], columns[1][1] - 24)
+            stock_code = str(row.get("code") or "-")
+            draw.text((x + 12, y + 8), stock_name, font=fonts["cell_bold"], fill="#343A40")
+            draw.text((x + 12, y + 39), stock_code, font=fonts["code"], fill="#D34A37")
+            x += columns[1][1]
+
+            business = fit_text(row.get("mainBusiness"), fonts["cell"], columns[2][1] - 24)
+            draw.text((x + 12, center_y(y, row_h, fonts["cell"])), business, font=fonts["cell"], fill="#3F4852")
+            x += columns[2][1]
+
+            values = [
+                f"{fmt_yi(row.get('totalMarketCap'))} / {fmt_yi(row.get('floatMarketCap'))}",
+                fmt_yi(row.get("todayAmount"), 2),
+                "-" if row.get("turnoverRate") is None else f"{float(row['turnoverRate']):.2f}%",
+                fmt_pct(row.get("todayPct")),
+                fmt_pe(row.get("peRatio")),
+            ]
+            for value_index, value in enumerate(values, start=3):
+                column_width = columns[value_index][1]
+                value_font = fonts["cell"]
+                fitted = fit_text(value, value_font, column_width - 18)
+                text_width = draw.textlength(fitted, font=value_font)
+                color = "#59636E"
+                if value_index == 6 and row.get("todayPct") is not None:
+                    pct = float(row["todayPct"])
+                    color = "#D93A32" if pct > 0 else "#14966B" if pct < 0 else "#59636E"
+                draw.text(
+                    (x + (column_width - text_width) / 2, center_y(y, row_h, value_font)),
+                    fitted,
+                    font=value_font,
+                    fill=color,
+                )
+                x += column_width
+
+            draw.line((table_left, y + row_h - 1, width - margin, y + row_h - 1), fill="#E7EBEF", width=1)
+            y += row_h
+            stock_index += 1
+
+    draw.text(
+        (margin, height - 55),
+        "数据来自 Stock Killer 当日强势股；列顺序与网页表格保持一致（不含交互式“加入自选”列）。",
+        font=fonts["foot"],
+        fill="#6B7580",
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path, optimize=True)
+
+
+def send_document(session: requests.Session, image_path: Path, caption: str) -> int:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         raise RuntimeError("missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
-    caption = f"{trade_date.month}月{trade_date.day}日 A股涨停热点复盘"
     with image_path.open("rb") as image_file:
         response = session.post(
             f"https://api.telegram.org/bot{token}/sendDocument",
@@ -230,10 +418,32 @@ def main() -> int:
         return 0
     json_path = output_dir / f"ifind_hot_recap_{trade_date.isoformat()}.json"
     image_path = output_dir / f"ifind_hot_recap_{trade_date.isoformat()}.png"
+    strong_stock_rows = load_strong_stock_rows(trade_date)
+    strong_stock_image_path = output_dir / f"strong_stocks_{trade_date.isoformat()}.png"
     json_path.write_text(json.dumps({"date": trade_date.isoformat(), "count": len(rows), "rows": rows}, ensure_ascii=False, indent=2), encoding="utf-8")
     render_image(rows, trade_date, image_path)
-    message_id = None if args.dry_run else send_document(session, image_path, trade_date)
-    print(json.dumps({"status": "ok", "date": trade_date.isoformat(), "count": len(rows), "image": str(image_path), "message_id": message_id}, ensure_ascii=False))
+    render_strong_stock_table(strong_stock_rows, trade_date, strong_stock_image_path)
+    if args.dry_run:
+        message_id = None
+        strong_stock_message_id = None
+    else:
+        message_id = send_document(session, image_path, f"{trade_date.month}月{trade_date.day}日 A股涨停热点复盘")
+        strong_stock_message_id = send_document(session, strong_stock_image_path, f"{trade_date.month}月{trade_date.day}日 当日强势股")
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "date": trade_date.isoformat(),
+                "count": len(rows),
+                "image": str(image_path),
+                "message_id": message_id,
+                "strong_stock_count": len(strong_stock_rows),
+                "strong_stock_image": str(strong_stock_image_path),
+                "strong_stock_message_id": strong_stock_message_id,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
