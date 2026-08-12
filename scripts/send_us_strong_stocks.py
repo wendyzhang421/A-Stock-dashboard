@@ -317,8 +317,13 @@ def enrich_rows(session: requests.Session, rows: list[dict]) -> None:
             row["riseReason"] = str(item.get("reason") or "未查到可核验的当日催化").strip()
             row["reasonSource"] = evidence_item
         else:
-            row["riseReason"] = "未查到可核验的当日催化"
-            row["reasonSource"] = {}
+            structured = next((headline for headline in context["headlines"] if headline.get("provider") == "StockNews.AI"), None)
+            if structured:
+                row["riseReason"] = structured["title"]
+                row["reasonSource"] = structured
+            else:
+                row["riseReason"] = "未查到可核验的当日催化"
+                row["reasonSource"] = {}
         row["recentHeadlines"] = context["headlines"]
 
 
