@@ -9,7 +9,7 @@ on:
         default: false
         type: boolean
   schedule:
-    # 06:30 New York time covers both EST and EDT and runs after the prior close.
+    # 10:30 UTC = 18:30 Beijing. Tue-Sat sends the prior US trading session recap.
     - cron: "30 10 * * 2-6"
 
 permissions:
