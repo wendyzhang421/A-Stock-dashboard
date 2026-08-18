@@ -192,8 +192,9 @@ def fetch_company_context(session: requests.Session, row: dict) -> dict:
             source = str(source_node.text or "").strip() if source_node is not None else ""
             link = str(item.findtext("link") or "").strip()
             title_lower = title.lower()
-            if title and (symbol.lower() in title_lower or any(word in title_lower for word in distinctive[:3])):
-                headlines.append({"title": title, "published": published, "source": source, "link": link})
+            is_non_catalyst = any(re.search(pattern, title_lower, re.I) for pattern in NON_CATALYST_PATTERNS)
+            if title and not is_non_catalyst and (symbol.lower() in title_lower or any(word in title_lower for word in distinctive[:3])):
+                headlines.append({"title": title, "published": published, "source": source, "link": link, "provider": "Google News"})
             if len(headlines) >= 5:
                 break
     except Exception:
@@ -249,6 +250,76 @@ def fetch_stocknews_signals(rows: list[dict]) -> dict[str, list[dict]]:
     for items in signals.values():
         items.sort(key=lambda x: (float(x.get("relevanceScore") or 0), float(x.get("importanceScore") or 0), x["published"]), reverse=True)
     return signals
+
+
+CATALYST_PATTERNS = (
+    (r"\b(wall street).*(?:hikes?|raises?).*(?:targets?|price targets?)\b", "华尔街上调目标价"),
+    (r"\b(wall street).*(?:bullish|backs?|positive).*(?:ai|deals?|growth)\b", "华尔街看多AI业务前景"),
+    (r"\b(upgrade|upgraded|initiates? coverage|price target|outperform|overweight)\b", "券商评级或目标价催化"),
+    (r"\b(beat(?:s)? estimates?|earnings beat|revenue beat|tops? estimates?|raises? (?:its )?(?:full.year )?guidance|boosts? outlook)\b", "业绩超预期或上调指引"),
+    (r"\b(fda|approval|approved|clinical trial|phase [123]|drug data)\b", "药物审批或临床进展"),
+    (r"\b(acquire|acquisition|merger|takeover|buyout|strategic review)\b", "公司并购或战略交易消息"),
+    (r"\b(memory rally|memory stocks?|memory chip stocks?|nand|dram)\b", "存储芯片板块行情走强"),
+    (r"\b(sampling|sampled|qualification|design win)\b", "新产品送样或客户验证进展"),
+    (r"\b(contract|orders?|partnership|partners with|selected by|award(?:ed)?|deals?)\b", "订单或合作消息"),
+    (r"\b(buyback|repurchase|dividend|capital return)\b", "回购、分红或资本回报"),
+)
+
+NON_CATALYST_PATTERNS = (
+    r"\b(acquires?|buys?|purchases?|sells?|reduces?) (?:shares|a stake|stake|position)\b",
+    r"\b(shares in|holdings? in|asset management|capital advisors|wealth partners|institutional position|13f)\b",
+    r"\b(overvalued|undervalued|gf value|is .* worth buying|should you buy|price prediction)\b",
+)
+
+
+def headline_timestamp(item: dict) -> float:
+    raw = str(item.get("published") or "")
+    try:
+        if re.match(r"^\d{4}-\d{2}-\d{2}T", raw):
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        parsed = email.utils.parsedate_to_datetime(raw)
+        return parsed.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def deterministic_catalyst(headlines: list[dict], row: dict) -> tuple[str, dict]:
+    """Select traceable evidence even when the translation model is unavailable."""
+    candidates: list[tuple[float, str, dict]] = []
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=96)).timestamp()
+    for item in headlines:
+        title = str(item.get("title") or "").strip()
+        if not title or headline_timestamp(item) < cutoff:
+            continue
+        title_lower = title.lower()
+        if any(re.search(pattern, title_lower, re.I) for pattern in NON_CATALYST_PATTERNS):
+            continue
+        label = ""
+        keyword_score = 0
+        for pattern, pattern_label in CATALYST_PATTERNS:
+            if re.search(pattern, title_lower, re.I):
+                label = pattern_label
+                keyword_score = 30
+                break
+        provider_score = 40 if item.get("provider") == "StockNews.AI" else 15
+        relevance_score = min(float(item.get("relevanceScore") or 0), 100) / 5
+        recency_score = max(0.0, (headline_timestamp(item) - cutoff) / 86400)
+        question_penalty = 20 if re.search(r"what(?:'s| is) (?:going on|driving)|why .* (?:up|rising|surging)", title_lower) else 0
+        score = provider_score + keyword_score + relevance_score + recency_score - question_penalty
+        # Unclassified raw headlines often only restate the price move. Keep them
+        # out unless a structured provider has already linked the event to the ticker.
+        if label or item.get("provider") == "StockNews.AI":
+            reason = label if label else f"相关消息：{title}"
+            candidates.append((score, reason, item))
+    if not candidates:
+        sector_text = f"{row.get('sector', '')} {row.get('industry', '')}".lower()
+        if row.get("symbol") == "TER" or any(word in sector_text for word in ("semiconductor", "electronic", "technology", "test equipment", "robotic")):
+            return "半导体/AI硬件板块共振，未见独立催化", {}
+        if any(word in sector_text for word in ("industrial", "construction", "engineering")):
+            return "工业/数据中心基建主题动量，未见独立催化", {}
+        return "板块或动量驱动，未见公司级催化", {}
+    _, reason, evidence = max(candidates, key=lambda value: value[0])
+    return reason, evidence
 
 
 def enrich_rows(session: requests.Session, rows: list[dict]) -> None:
@@ -317,13 +388,7 @@ def enrich_rows(session: requests.Session, rows: list[dict]) -> None:
             row["riseReason"] = str(item.get("reason") or "未查到可核验的当日催化").strip()
             row["reasonSource"] = evidence_item
         else:
-            structured = next((headline for headline in context["headlines"] if headline.get("provider") == "StockNews.AI"), None)
-            if structured:
-                row["riseReason"] = structured["title"]
-                row["reasonSource"] = structured
-            else:
-                row["riseReason"] = "未查到可核验的当日催化"
-                row["reasonSource"] = {}
+            row["riseReason"], row["reasonSource"] = deterministic_catalyst(context["headlines"], row)
         row["recentHeadlines"] = context["headlines"]
 
 
@@ -384,7 +449,7 @@ def render(rows: list[dict], market_date: str, output: Path) -> None:
                 draw.text((x + (col_w - draw.textlength(line, font=use_font)) / 2, y + 21 + line_index * 28), line, font=use_font, fill=color)
             x += col_w
         y += row_h
-    note = "筛选：涨幅>5%，市值$30B–$200B，成交额>$70M；上涨原因仅采用最近72小时且可对应公司的新闻证据，无证据则明确标注。"
+    note = "筛选：涨幅>5%，市值$30B–$200B，成交额>$70M；催化采用近96小时精确公司新闻，无独立消息则标注板块/动量驱动。"
     draw.text((margin, height - 52), note, font=small, fill="#6B7580")
     output.parent.mkdir(parents=True, exist_ok=True)
     image.save(output, optimize=True)
