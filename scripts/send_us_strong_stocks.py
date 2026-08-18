@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import email.utils
 import json
@@ -199,7 +200,89 @@ def fetch_company_context(session: requests.Session, row: dict) -> dict:
                 break
     except Exception:
         pass
-    return {"description": description, "headlines": headlines}
+    return {"description": description, "headlines": headlines, "financials": {}}
+
+
+def nasdaq_statement_number(value: object) -> float | None:
+    text = str(value or "").strip().replace(",", "")
+    if not text or text in {"--", "N/A"}:
+        return None
+    negative = text.startswith("-")
+    text = text.replace("$", "").replace("-", "")
+    try:
+        # Nasdaq financial statement values are reported in thousands of USD.
+        result = float(text) * 1000
+        return -result if negative else result
+    except ValueError:
+        return None
+
+
+def fetch_latest_financials(session: requests.Session, symbol: str) -> dict:
+    headers = dict(session.headers)
+    result: dict = {"source": "Nasdaq", "symbol": symbol}
+    try:
+        payload = nasdaq_json_with_retry(
+            f"https://api.nasdaq.com/api/company/{symbol}/earnings-surprise", headers
+        )
+        rows = ((((payload.get("data") or {}).get("earningsSurpriseTable") or {}).get("rows")) or [])
+        if rows:
+            latest = rows[0]
+            result.update({
+                "fiscalPeriod": str(latest.get("fiscalQtrEnd") or ""),
+                "reportedDate": str(latest.get("dateReported") or ""),
+                "eps": number(latest.get("eps")),
+                "epsConsensus": number(latest.get("consensusForecast")),
+                "epsSurprisePct": number(latest.get("percentageSurprise")),
+            })
+    except Exception:
+        pass
+    try:
+        payload = nasdaq_json_with_retry(
+            f"https://api.nasdaq.com/api/company/{symbol}/financials",
+            headers,
+            params={"frequency": "2"},
+        )
+        table = ((payload.get("data") or {}).get("incomeStatementTable") or {})
+        statement_headers = table.get("headers") or {}
+        statement_rows = table.get("rows") or []
+        latest_date_text = str(statement_headers.get("value2") or "")
+        revenue_row = next((x for x in statement_rows if x.get("value1") == "Total Revenue"), {})
+        net_income_row = next((x for x in statement_rows if x.get("value1") == "Net Income"), {})
+        revenue = nasdaq_statement_number(revenue_row.get("value2"))
+        previous_revenue = nasdaq_statement_number(revenue_row.get("value3"))
+        net_income = nasdaq_statement_number(net_income_row.get("value2"))
+        matches_eps_period = True
+        if latest_date_text and result.get("fiscalPeriod"):
+            statement_end = datetime.strptime(latest_date_text, "%m/%d/%Y").date()
+            fiscal_month = datetime.strptime(result["fiscalPeriod"], "%b %Y")
+            fiscal_end = date(fiscal_month.year, fiscal_month.month, calendar.monthrange(fiscal_month.year, fiscal_month.month)[1])
+            matches_eps_period = abs((statement_end - fiscal_end).days) <= 45
+        if revenue is not None and matches_eps_period:
+            if not result.get("fiscalPeriod") and latest_date_text:
+                result["fiscalPeriod"] = datetime.strptime(latest_date_text, "%m/%d/%Y").strftime("%b %Y")
+            result.update({
+                "statementPeriodEnd": latest_date_text,
+                "revenue": revenue,
+                "netIncome": net_income,
+                "revenueQoqPct": ((revenue / previous_revenue) - 1) * 100 if previous_revenue else None,
+            })
+    except Exception:
+        pass
+    return result
+
+
+def nasdaq_json_with_retry(url: str, headers: dict, params: dict | None = None) -> dict:
+    last_error: Exception | None = None
+    for _ in range(2):
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=18)
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return {}
 
 
 def fallback_business(row: dict, description: str) -> str:
@@ -331,7 +414,17 @@ def enrich_rows(session: requests.Session, rows: list[dict]) -> None:
             try:
                 contexts[symbol] = future.result()
             except Exception:
-                contexts[symbol] = {"description": "", "headlines": []}
+                contexts[symbol] = {"description": "", "headlines": [], "financials": {}}
+    # Financial endpoints are independent of profile/news; fetch them together
+    # so two Nasdaq requests per ticker do not extend each context worker serially.
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(rows)))) as executor:
+        futures = {executor.submit(fetch_latest_financials, session, row["symbol"]): row["symbol"] for row in rows}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                contexts[symbol]["financials"] = future.result()
+            except Exception:
+                contexts[symbol]["financials"] = {}
     try:
         stocknews = fetch_stocknews_signals(rows)
         for row in rows:
@@ -378,6 +471,8 @@ def enrich_rows(session: requests.Session, rows: list[dict]) -> None:
         item = enriched.get(row["symbol"], {})
         context = contexts[row["symbol"]]
         row["businessIntro"] = str(item.get("business") or fallback_business(row, context["description"])).strip()
+        row["latestFinancials"] = context.get("financials") or {}
+        row["financialSummary"] = format_financial_summary(row["latestFinancials"])
         evidence_index = item.get("evidenceIndex", -1)
         try:
             evidence_index = int(evidence_index)
@@ -404,9 +499,26 @@ def compact_usd(value: float) -> str:
     return f"${value / 1e9:.2f}B" if value >= 1e9 else f"${value / 1e6:.1f}M"
 
 
+def format_financial_summary(data: dict) -> str:
+    period = str(data.get("fiscalPeriod") or "最新财报")
+    parts: list[str] = []
+    revenue = data.get("revenue")
+    if isinstance(revenue, (int, float)):
+        qoq = data.get("revenueQoqPct")
+        qoq_text = f" 环比{qoq:+.1f}%" if isinstance(qoq, (int, float)) else ""
+        parts.append(f"{period} 营收{compact_usd(float(revenue))}{qoq_text}")
+    eps = data.get("eps")
+    if isinstance(eps, (int, float)):
+        surprise = data.get("epsSurprisePct")
+        surprise_text = f" 超预期{surprise:+.1f}%" if isinstance(surprise, (int, float)) else ""
+        eps_text = f"-${abs(eps):.2f}" if eps < 0 else f"${eps:.2f}"
+        parts.append(f"EPS {eps_text}{surprise_text}")
+    return "\n".join(parts) if parts else "暂无结构化财报"
+
+
 def render(rows: list[dict], market_date: str, output: Path) -> None:
     font_path = find_font()
-    width, margin, row_h, header_h = 2130, 48, 92, 62
+    width, margin, row_h, header_h = 2500, 48, 104, 62
     height = 285 + header_h + len(rows) * row_h + 80
     image = Image.new("RGB", (width, height), "#F5F7FA")
     draw = ImageDraw.Draw(image)
@@ -421,7 +533,7 @@ def render(rows: list[dict], market_date: str, output: Path) -> None:
     draw.rounded_rectangle((40, 35, width - 40, 220), radius=28, fill="#2457C5")
     draw.text((margin + 25, 62), "美股当日强势股", font=title, fill="#FFFFFF")
     draw.text((margin + 27, 145), f"{market_date or '最新交易日'}   共 {len(rows)} 只   数据源 Nasdaq", font=subtitle, fill="#DDE8FF")
-    columns = [("#", 60), ("股票", 190), ("公司业务", 500), ("上涨原因", 650), ("价格", 140), ("市值", 180), ("成交额", 190), ("涨幅", 140)]
+    columns = [("#", 60), ("股票", 180), ("公司业务", 470), ("上涨原因", 620), ("最新财报", 390), ("价格", 140), ("市值", 180), ("成交额", 190), ("涨幅", 140)]
     y = 255
     draw.rectangle((margin, y, width - margin, y + header_h), fill="#253246")
     x = margin
@@ -435,16 +547,16 @@ def render(rows: list[dict], market_date: str, output: Path) -> None:
         source = (row.get("reasonSource") or {}).get("source") or ""
         if source and reason != "未查到可核验的当日催化":
             reason = f"{reason}（{source}）"
-        values = [str(index), row["symbol"], row.get("businessIntro") or "-", reason, f"${row['lastPrice']:.2f}", compact_usd(row["marketCap"]), compact_usd(row["dollarVolume"]), f"+{row['pctChange']:.2f}%"]
+        values = [str(index), row["symbol"], row.get("businessIntro") or "-", reason, row.get("financialSummary") or "暂无结构化财报", f"${row['lastPrice']:.2f}", compact_usd(row["marketCap"]), compact_usd(row["dollarVolume"]), f"+{row['pctChange']:.2f}%"]
         x = margin
         for col_index, ((_, col_w), value) in enumerate(zip(columns, values)):
             use_font = head if col_index == 1 else cell
-            lines = [value]
-            if col_index in {2, 3} and draw.textlength(value, font=use_font) > col_w - 24:
+            lines = value.splitlines() or [value]
+            if len(lines) == 1 and col_index in {2, 3, 4} and draw.textlength(value, font=use_font) > col_w - 24:
                 cut = max(1, int(len(value) * (col_w - 24) / draw.textlength(value, font=use_font)))
                 lines = [value[:cut], value[cut:]]
             lines = [line if draw.textlength(line, font=use_font) <= col_w - 24 else line[:max(3, len(line) - 2)] + "…" for line in lines[:2]]
-            color = "#D93A32" if col_index == 7 else "#2457C5" if col_index == 1 else "#44505E"
+            color = "#D93A32" if col_index == 8 else "#2457C5" if col_index == 1 else "#44505E"
             for line_index, line in enumerate(lines):
                 draw.text((x + (col_w - draw.textlength(line, font=use_font)) / 2, y + 21 + line_index * 28), line, font=use_font, fill=color)
             x += col_w
