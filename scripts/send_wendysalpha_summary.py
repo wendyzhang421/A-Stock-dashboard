@@ -349,6 +349,14 @@ def fallback_classification(account: dict[str, Any]) -> dict[str, Any]:
         "professional ",
         "opinions are my own",
         "views are my own",
+        "head of ",
+        "intern @",
+        "survivor",
+        "former:",
+        "prev:",
+        "founding team",
+        "market thoughts",
+        "eir ",
         "个人",
     )
     project_terms = (
@@ -379,6 +387,14 @@ def fallback_classification(account: dict[str, Any]) -> dict[str, Any]:
             "building ",
             "opinions are my own",
             "views are my own",
+            "head of ",
+            "intern @",
+            "survivor",
+            "former:",
+            "prev:",
+            "founding team",
+            "market thoughts",
+            "eir ",
         )
     ):
         personal_score += 3
