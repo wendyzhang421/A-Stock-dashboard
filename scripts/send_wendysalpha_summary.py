@@ -34,6 +34,7 @@ X_HANDLE_RE = re.compile(
 )
 FOLLOW_RE = re.compile(r"^(.+?)\s+关注了\s+(.+?)\s*$")
 MUTUAL_RE = re.compile(r"你关注的\s*(\d+)\s*个用户")
+CHINESE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 FONT_REGULAR = (
     Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
     Path("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf"),
@@ -327,6 +328,139 @@ def collect_new_accounts(
     return accounts, duplicates
 
 
+def contains_chinese_summary(value: object, minimum: int = 8) -> bool:
+    """Return whether a model summary contains enough Chinese to publish."""
+    text = str(value or "").strip()
+    return len(CHINESE_RE.findall(text)) >= minimum
+
+
+def fallback_project_intro(account: dict[str, Any]) -> str:
+    """Turn public profile signals into a short Chinese project explanation.
+
+    This path is deliberately extractive rather than generative: it never pastes
+    an English bio into the Telegram image.  It gives the reader a useful Chinese
+    category-level explanation when external AI research is unavailable.
+    """
+    text = f"{account.get('name', '')} {account.get('bio', '')}".lower()
+    categories: tuple[tuple[tuple[str, ...], str], ...] = (
+        (
+            ("stablecoin", "payments", "payment", "payfi", "remittance"),
+            "一个加密支付或稳定币项目，提供链上结算、转账及相关金融服务。",
+        ),
+        (
+            ("rwa", "real world asset", "tokenized", "tokenization"),
+            "一个现实资产代币化项目，将传统资产引入链上发行、交易或管理。",
+        ),
+        (
+            ("perpetual", "perps", "derivatives", "prediction market"),
+            "一个链上交易项目，提供衍生品、永续合约或预测市场等交易服务。",
+        ),
+        (
+            ("defi", "dex", "swap", "lending", "borrow", "yield", "liquidity", "amm"),
+            "一个去中心化金融项目，提供交易、借贷、收益或流动性相关服务。",
+        ),
+        (
+            ("wallet", "custody", "account abstraction", "smart account"),
+            "一个加密钱包或账户基础设施项目，帮助用户管理资产并完成链上交互。",
+        ),
+        (
+            ("security", "audit", "exploit", "bug bounty", "threat"),
+            "一个区块链安全项目，提供审计、风险监控或漏洞防护服务。",
+        ),
+        (
+            ("privacy", "zero knowledge", "zero-knowledge", "zkp", "zk "),
+            "一个隐私与零知识技术项目，为链上应用提供隐私保护或扩容能力。",
+        ),
+        (
+            ("oracle", "analytics", "onchain data", "on-chain data", "data platform", "terminal"),
+            "一个链上数据项目，提供数据查询、分析、行情或研究工具。",
+        ),
+        (
+            ("artificial intelligence", " ai ", "ai agent", "agents", "machine learning", "llm"),
+            "一个人工智能项目，提供智能代理、模型应用或相关开发工具。",
+        ),
+        (
+            ("developer", "developers", "sdk", "api", "infrastructure", "infra", "rpc", "node", "open source"),
+            "一个区块链开发基础设施项目，为开发者提供接口、工具或底层服务。",
+        ),
+        (
+            ("layer 2", "layer2", "rollup", "blockchain", "network", "modular", "protocol"),
+            "一个区块链网络或协议项目，提供链上基础设施、扩容或生态服务。",
+        ),
+        (
+            ("exchange", "trading", "trade", "marketplace", "broker"),
+            "一个数字资产交易平台，提供交易、市场撮合或相关金融工具。",
+        ),
+        (
+            ("nft", "collectible", "gaming", "game", "metaverse"),
+            "一个链游或数字收藏项目，围绕游戏体验、虚拟资产和社区运营展开。",
+        ),
+        (
+            ("memecoin", "meme coin", "meme token", " meme "),
+            "一个加密迷因项目，主要围绕代币叙事与社区传播运营。",
+        ),
+        (
+            ("venture", "capital", "investment fund", "accelerator", "incubator", "launchpad"),
+            "一个投资或项目孵化机构，主要支持早期科技与加密项目。",
+        ),
+        (
+            ("media", "news", "newsletter", "podcast", "community", "creator"),
+            "一个行业媒体或社区项目，主要提供资讯、研究内容与社群服务。",
+        ),
+        (
+            ("social", "consumer app", "messaging", "identity"),
+            "一个面向用户的链上应用，侧重社交、身份或消费级产品体验。",
+        ),
+    )
+    for keywords, intro in categories:
+        if any(keyword in text for keyword in keywords):
+            return intro
+    return "一个加密行业项目或组织，围绕其产品、社区或生态开展服务，具体业务仍需进一步核验。"
+
+
+def fallback_person_intro(account: dict[str, Any]) -> str:
+    """Create a Chinese professional/content-direction summary for a person."""
+    text = f"{account.get('name', '')} {account.get('bio', '')}".lower()
+    categories: tuple[tuple[tuple[str, ...], str], ...] = (
+        (
+            ("founder", "co-founder", "building ", "builder", "entrepreneur"),
+            "创业者或项目建设者，主要分享产品建设、行业观察与个人动态。",
+        ),
+        (
+            ("engineer", "developer", "software", "cto ", "coding", "programmer"),
+            "软件开发者或工程师，主要分享技术开发、加密应用与项目建设内容。",
+        ),
+        (
+            ("researcher", "research", "analyst", "economist", "scientist"),
+            "研究员或分析师，主要关注加密市场、技术趋势与行业研究。",
+        ),
+        (
+            ("investor", "venture", "partner @", "capital", "portfolio"),
+            "投资人或机构从业者，主要关注早期项目、市场趋势与投资观点。",
+        ),
+        (
+            ("trader", "trading", "market thoughts", "markets", "macro"),
+            "交易者或市场观察者，主要分享加密市场、交易与宏观观点。",
+        ),
+        (
+            ("designer", "design", "artist", "creative"),
+            "设计或创意从业者，主要分享产品设计、数字艺术与创作内容。",
+        ),
+        (
+            ("growth", "marketing", "community", "ecosystem", "bd "),
+            "市场、增长或社区从业者，主要分享项目运营与生态发展内容。",
+        ),
+        (
+            ("journalist", "writer", "i write", "newsletter", "podcast", "media"),
+            "媒体或内容创作者，主要分享行业资讯、访谈与个人观点。",
+        ),
+    )
+    for keywords, intro in categories:
+        if any(keyword in text for keyword in keywords):
+            return intro
+    return "个人账号，主要分享其工作经历、行业观点与日常动态，具体职业定位仍需进一步核验。"
+
+
 def fallback_classification(account: dict[str, Any]) -> dict[str, Any]:
     text = f"{account.get('name', '')} {account.get('bio', '')}".lower()
     display_name = str(account.get("name") or "").strip()
@@ -403,20 +537,11 @@ def fallback_classification(account: dict[str, Any]) -> dict[str, Any]:
         personal_score += 2
     project_score = sum(term in text for term in project_terms)
     account_type = "个人" if personal_score > project_score else "项目"
-    bio = re.sub(r"\s+", " ", str(account.get("bio") or "")).strip()
     if account_type == "个人":
-        intro = (
-            f"个人账号，内容方向或职业定位：{bio[:150]}"
-            if bio
-            else "个人账号；公开简介较少，具体内容方向仍需继续核验。"
-        )
+        intro = fallback_person_intro(account)
         basis = "依据账号名称与公开简介进行初步判断。"
     else:
-        intro = (
-            f"项目账号；公开简介显示：{bio[:150]}"
-            if bio
-            else "项目或组织账号；公开简介较少，具体产品与定位仍需继续核验。"
-        )
+        intro = fallback_project_intro(account)
         basis = "依据品牌化账号名称与公开简介进行初步判断。"
     return {
         "handle": account["handle"],
@@ -484,9 +609,10 @@ def classify_batch(
 要求：
 1. 优先使用 X Search 核验账号近期内容和个人资料，再用 Web Search 核验官网、文档、GitHub、机构页面等公开来源。
 2. 项目包括产品、协议、代币、媒体、社区、公司和组织。个人是以自然人为主体的账号。
-3. 项目简介用中文一句话说明它做什么；个人简介用中文一句话概括内容方向或职业定位。
-4. 不要把账号自述当作已证实事实。资料不足时降低置信度并写明风险。
-5. 只返回 JSON 数组，不要 Markdown。每项字段必须为：
+3. intro 必须用自然、简洁的简体中文重新归纳：项目用一句话说明它具体做什么；个人用一句话概括内容方向或职业定位。
+4. intro 建议 20–55 个汉字；不得复制或粘贴英文 bio，不得以“公开简介显示”开头，也不得只做逐字翻译。
+5. 不要把账号自述当作已证实事实。资料不足时降低置信度并写明风险。
+6. 只返回 JSON 数组，不要 Markdown。每项字段必须为：
    handle, type, intro, basis, confidence, risk, sources
    type 只能是“个人”或“项目”；confidence 只能是“高”“中”“低”；sources 是 URL 数组。
 
@@ -573,8 +699,18 @@ def classify_accounts(
     for account in accounts:
         key = account["handle_key"]
         classification = classifications.get(key) or fallback_classification(account)
-        if not classification.get("intro"):
-            classification = fallback_classification(account)
+        if not contains_chinese_summary(classification.get("intro")):
+            fallback = fallback_classification(account)
+            classification = {
+                **classification,
+                "intro": (
+                    fallback_project_intro(account)
+                    if classification.get("type") == "项目"
+                    else fallback_person_intro(account)
+                ),
+                "confidence": "低",
+                "risk": "模型未返回合格的中文归纳，已改用公开资料关键词进行中文概括。",
+            }
         sources = classification.get("sources") or []
         if account["x_url"] not in sources:
             sources.insert(0, account["x_url"])
